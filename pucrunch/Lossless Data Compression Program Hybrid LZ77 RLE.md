@@ -4,9 +4,9 @@ This text is taken from [http://www.iki.fi/a1bert/Dev/pucrunch/](http://www.iki.
 
 First Version 14.3.1997; Rewritten Version 17.12.1997; Another Major Update 14.10.1998; Last Updated 22.11.2008
 
-##Pasi Ojala, [_a1bert@iki.fi_](http://www.iki.fi/a1bert/)
-#An Optimizing Hybrid LZ77 RLE Data Compression Program
-##aka. Improving Compression Ratio for Low-Resource Decompression
+## Pasi Ojala, [_a1bert@iki.fi_](http://www.iki.fi/a1bert/)
+# An Optimizing Hybrid LZ77 RLE Data Compression Program
+## aka. Improving Compression Ratio for Low-Resource Decompression
 
 Short:  
 Pucrunch is a Hybrid LZ77 and RLE compressor, uses an Elias Gamma Code for lengths, mixture of Gamma Code and linear for LZ77 offset, and ranked RLE bytes indexed by the same Gamma Code. Uses no extra memory in decompression.
