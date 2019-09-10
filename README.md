@@ -42,7 +42,7 @@ With a view to the presumed usecase, the chosen data types limit data size to `6
 
 The code should compile straight away by `gcc pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
 
-``pucr < ivanova.bin > ivanova.bin.pu.upu``
+``./pucr < ivanova.bin > ivanova.bin.pu.upu``
 
 Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
 
