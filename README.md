@@ -22,7 +22,7 @@ The following list of changes might be completed and explained textually more de
 
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixated 8-bit size.
 
-- General LZ offsets (for longer-than-two matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding. An optimization run to determine the optimal number of plainly encoded LSBs is performed.
+- General LZ offsets (for longer-than-two matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number of plainly encoded LSBs is performed.
 
 - While determining the RLE and LZ costs, the longest match and _all_ shorter matches are checked.
 
@@ -36,7 +36,7 @@ This all is _work in progress_! The code still is extremly polluted with `fprint
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
-So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look in how `pthread` could be of help here.
+So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
