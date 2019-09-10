@@ -68,7 +68,8 @@ struct node {
 //	 not using a rle rank table (if no_esc > 1 and '1111' is indicating unranked
 //	 rle character, common rle runs of 2 would take 16 or more bits and thus
 //	 unfortunately too expensive)
-
+// TODO: implement a shorter 'code' for LZ2, i.e. 'ESC00' instead of 'ESC000'.
+//	 at least as long as 'ESC001' is not used, would save one bit per LZ2
 
 static void start_clock(void) {
 	start = clock();
@@ -153,7 +154,7 @@ static uint32_t update_rle_rank_table (struct node graph[], const uint8_t *inbuf
         }
         // first position
         if (rle_count > 1) rle_occ[inbuf[i+1]]++;
-// fprintf ("stderr, !!! RLE %c at %u !!!\n", inbuf[i+1],i+1);
+// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i+1);
 
         /* generate ranks */
         uint16_t max_index, max_value;
@@ -327,7 +328,6 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_
 	}
 	*no_lz_offset_lsb = min_no_lsb + 1;
 
-	// !!! a sane default for LZ2_bits would be min (int_log2 (in_len),8)
 	int max_p = 16 - 3 - no_esc;
 	int min_lz2_bits = int_log2 (in_len);
 	min_lz2_bits = (min_lz2_bits <= 8)?min_lz2_bits:8;
@@ -886,7 +886,7 @@ fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 
 	uint8_t current_esc = current_esc8 << (8 - no_esc);
 	uint8_t esc_mask = 0xFF00 >> no_esc;
-
+uint16_t lz2_cnt = 0;
 
 	for (uint16_t cnt=0;cnt<len;) {
 		uint8_t first_fetch = up_GetBits(no_esc);
@@ -921,6 +921,7 @@ fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 						break; }
 					case LZ: {
 						// to be specific, this is LZ2
+lz2_cnt++;
 						uint16_t offset = up_GetBits (lz2_bits);
 //fprintf (stderr, "%u. LZ (2,%u)\n", cnt, offset+2);
 						outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
@@ -951,6 +952,7 @@ fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 //fprintf (stderr, "%u. LIT (%c)\n", cnt-1, first_fetch);
 		}
 	}
+fprintf (stderr, "LZ2 COUNT: %u\n", lz2_cnt);
 print_clock(); start_clock();
 	*out_len = len;
 }
@@ -981,7 +983,7 @@ int main(int argc, char* argv[]) {
    	char output[65535];
 	uint32_t outlen = 65535;
 
-	pucrunch_256_encode (output, &outlen, buffer, fileLen, 0);
+	pucrunch_256_encode (output, &outlen, buffer, fileLen, 3);
 	free(buffer);
 	fprintf (stderr, "pucrunch: %u --> %u bytes\n",fileLen, outlen);
 	pucrunch_256_decode (output, &outlen, out_buffer, outlen);
