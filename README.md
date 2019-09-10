@@ -2,9 +2,9 @@
 
 ## Experimental Compression Playground
 
-Looking out for some suitable compression for the lightweight VPN software [`n2n`](https://github.com/ntop/n2n), I happened to come across Pasi Ojala's [`pucrunch`](http://a1bert.kapsi.fi/Dev/pucrunch/). Not only that it is extremly assymetric and thus lightweight in terms of decompression, documentation also is extremely explainatory giving full particulars in a wonderfully comprehensable way.
+Looking out for some suitable compression for the lightweight VPN software [`n2n`](https://github.com/ntop/n2n), I happened to come across Pasi Ojala's [`pucrunch`](http://a1bert.kapsi.fi/Dev/pucrunch/). Not only that it is extremly assymetric and thus lightweight in terms of decompression, documentation also is highly explainatory giving full particulars in a wonderfully comprehensable way.
 
-Having read that extremly inspring [article](https://github.com/Logan007/ECS/blob/master/pucrunch/README.md) (converted to markdown, see pucrunch [folder](https://github.com/Logan007/ECS/tree/master/pucrunch)) more than just several times, I started off to create my own implementation `pucr` which uses some of the original code and also includes some optimizations.
+Having enjoyed reading that extremly inspring [article](https://github.com/Logan007/Pucr/blob/master/pucrunch/README.md) (converted to markdown, see pucrunch [folder](https://github.com/Logan007/Pucr/tree/master/pucrunch)) more than just several times, I started off to create my own implementation `pucr` which uses some of the original code and also includes some optimizations.
 
 ## Use Case
 
@@ -28,7 +28,7 @@ The following list of changes might be completed and explained textually more de
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. _Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops :smile:
 
-- The header contains paramters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
+- The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
 ## Thoughts and Status
 
@@ -46,4 +46,4 @@ The code should compile straight away by `gcc pucr.c -o pucr` to an executable c
 
 Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
 
-Any hint or support is appreciated – just leave an _issue_!
+Any hint or support is welcome – just leave an _issue_!
