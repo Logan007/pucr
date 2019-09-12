@@ -298,18 +298,18 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_
 					       uint8_t no_esc,
 					       uint8_t *no_lz_offset_lsb, uint8_t *no_lz2_offset_bits) {
 
-	uint32_t lz_occ[16] = {0}; // for optimization !!!
+	uint32_t lz_occ[16] = {0};
 	uint32_t lz2_occ[16] = {0};
 	// after all matches are finally determinded, calculate the optimum of lsb-msb coding ratio
-	// first step: count them, especially the bits they need
+	// first step: count them, especially the bits their offsets need
 	for (int i=0; i != in_len; i=graph[i].next_node) {
 		if (graph[i].way_to_go == LZ) {
 			// lz_length is not necessarily the real way to go,
 			// but next_node is
 			if ((graph[i].next_node - i) >= 3) {
 				// for the 3-byte and longer matches: calculate the case with "p" pure LSB and the rest E.Gamma-coded
-			        for (int p=0; p <16; p++) // 0 = 1-bit offset, 1 = 2-bit offset
-					lz_occ[p] += p + int_log2( ((graph[i].lz_offset-(graph[i].next_node-i))>>p)+1 )*2+1;
+			        for (int p=0; p <16; p++) // 0 = 1-bit offset, 1 = 2-bit offset, ...
+					lz_occ[p] += (p+1) + int_log2( ((graph[i].lz_offset-(graph[i].next_node-i))>>(p+1))+1 )*2+1;
 			} else {
 				int p = int_log2 (graph[i].lz_offset - 2);
 				p = p<=15?p:15;
@@ -328,27 +328,24 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_
 	}
 	*no_lz_offset_lsb = min_no_lsb + 1;
 
-	int max_p = 16 - 3 - no_esc;
+	int max_p = 16 - 3 - no_esc - 1;
 	int min_lz2_bits = int_log2 (in_len);
 	min_lz2_bits = (min_lz2_bits <= 8)?min_lz2_bits:8;
 	int max_saving = 0;
 	for (int p=0; p<max_p; p++) {
-// !!!
-		int sum = 0;
-		for (int q=0; q<=p; q++) sum += (lz2_occ[q] * (16 - (p+1 + no_esc + 3)));
-
-		int sum2 = 0;
-		for (int q=p+1; q<max_p; q++) sum2 += (lz2_occ[q] * (16 - (p+1 + no_esc +3)));
-
-		if ((sum-sum2) > max_saving)  {
-			max_saving = sum-sum2;
+		// count the bits saved for each LZ2 possible (i.e. if offset fits in p bits)
+		int gained = 0;
+		for (int q=0; q<=p; q++) gained += (lz2_occ[q] * (16 - (p+1 + no_esc +3)));
+		// lost bits due to unused LZ2 opportunities as offset length is longer than p bits
+		int lost = 0;
+		for (int q=p+1; q<max_p; q++) lost += (lz2_occ[q] * (16 - (p+1 + no_esc +3)));
+		// weigh against each other and store if minimum
+		if ((gained-lost) > max_saving)  {
+			max_saving = gained-lost;
 			min_lz2_bits = p + 1;
-// !!! check this !!!
-// fprintf (stderr, "LZ2 OFFSET %u BITS SAVED %d   LOST %d   RESULT: %d \n",p+1, sum, sum2, sum-sum2);
 		}
-
+// fprintf (stderr, "LZ2 OFFSET %u BITS SAVED %d   LOST %d   RESULT: %d [maxp: %u]\n",p+1, gained, lost, gained-lost, max_p);
 	}
-// !!! check this !!!
 // fprintf (stderr, "ESC: %2u LZ2 OFFSET %u BITS\n",no_esc, min_lz2_bits);
 	*no_lz2_offset_bits = min_lz2_bits;
 	return (0);
@@ -983,7 +980,7 @@ int main(int argc, char* argv[]) {
    	char output[65535];
 	uint32_t outlen = 65535;
 
-	pucrunch_256_encode (output, &outlen, buffer, fileLen, 3);
+	pucrunch_256_encode (output, &outlen, buffer, fileLen, 0);
 	free(buffer);
 	fprintf (stderr, "pucrunch: %u --> %u bytes\n",fileLen, outlen);
 	pucrunch_256_decode (output, &outlen, out_buffer, outlen);
