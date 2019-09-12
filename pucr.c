@@ -12,9 +12,9 @@
 static clock_t start, end;
 static double cpu_time_used;
 
-#define	NONE	0xFFFF
+// !!! #define	NONE	0xFFFF
 #define LZ	0x0000
-#define UNUSED  0x0001
+// !!! #define UNUSED  0x0001
 #define LIT	0x0002
 #define RLE	0x0003
 #define MARKED	0x0080
@@ -24,13 +24,12 @@ struct node {
 	uint16_t	lz_count;
 	uint16_t	lz_offset;
 	uint16_t	seen_before;
-	uint8_t		hash;
+//	uint8_t		hash;
 
 	uint16_t	way_to_go;
 	uint16_t	next_node;
 	uint32_t	bits_to_end;
 	uint8_t 	new_esc;
-
 };
 
 
@@ -261,7 +260,7 @@ static uint32_t find_matches (struct node graph[], const uint8_t *inbuf, uint16_
 		graph[i].seen_before = lastocc[inbuf[i]][inbuf[i+1]];
 		lastocc[inbuf[i]][inbuf[i+1]] = i;
 
-	       graph[i].hash = inbuf[i]*3 + inbuf[i+1]*5 + inbuf[i]*7;
+// !!!	       graph[i].hash = inbuf[i]*3 + inbuf[i+1]*5 + inbuf[i]*7;
 
 // we will be able to skip at least 2 characters when comparing
 // because we know we already have a 2-byte match.
