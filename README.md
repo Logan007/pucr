@@ -8,7 +8,7 @@ Having enjoyed reading that extremly inspring [article](https://github.com/Logan
 
 ## Use Case
 
-`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding supernode if necessary. To reduce traffic load and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
+`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding `supernode` if necessary. To reduce traffic load and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
 
 Today, most `edge` nodes presumably are desktop-like computers with a heap of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
@@ -35,6 +35,8 @@ The following list of changes might be completed and explained textually more de
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
+
+So far, I haven't taken advantage of `max_gamma` yet, this definitely is a TODO.
 
 So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
