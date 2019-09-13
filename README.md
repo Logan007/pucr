@@ -8,11 +8,11 @@ Having enjoyed reading that extremly inspring [article](https://github.com/Logan
 
 ## Use Case
 
-`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding `supernode` if necessary. To reduce traffic load and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
+`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding `supernode` if necessary. To reduce network traffic and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
 
 Today, most `edge` nodes presumably are desktop-like computers with a heap of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
-However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of thier precious CPU cycles. That is the reason for taking a closer look on compression algorithms offering that certain asymmetry.
+However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch`as one of the compression algorithms offering that certain asymmetry.
 
 ## Modifications vis-à-vis the Original
 
