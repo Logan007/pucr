@@ -26,7 +26,7 @@ The following list of changes might be completed and explained textually more de
 
 - While determining the RLE and LZ costs, the longest match and _all_ shorter matches are checked.
 
-- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. ~~_Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops~~ _In fact, there was a bug in the lz offset lsb optimizer... The `ivanova.bin`-file now regularily gets compressed to 9605 bytes and to 9620 for all the fast lanes._
+- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. ~~_Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops~~ _In fact, there was a bug in the lz offset lsb optimizer... The `ivanova.bin`-file now regularily gets compressed to 9605 (without header) bytes and to 9620 for all the fast lanes._
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
