@@ -20,11 +20,11 @@ The following list of changes might be completed and explained textually more de
 
 - An entry to the RLE table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
 
-- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixated 8-bit size.
+- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size.
 
 - General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number of plainly encoded LSBs is performed.
 
-- While determining the RLE and LZ costs, the longest match and _all_ shorter matches are checked.
+- While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
@@ -38,7 +38,7 @@ The `ivanova.bin`-file now regularily gets compressed to 9567 (without header) b
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
-So far, no advantage of `max_gamma` is taken yet, this definitely is a TODO.
+So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
 As of now, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
