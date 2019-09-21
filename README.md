@@ -26,7 +26,7 @@ The following list of changes might be completed and explained textually more de
 
 - While determining the RLE and LZ costs, the longest match and _all_ shorter matches are checked.
 
-- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. ~~_Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops~~ _In fact, there was a bug in the lz offset lsb optimizer... The `ivanova.bin`-file now regularily gets compressed to 9605 (without header) bytes and to 9620 for all the fast lanes._
+- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
@@ -34,11 +34,13 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
+The `ivanova.bin`-file now regularily gets compressed to 9567 (without header) bytes and a few more for the fast lanes.
+
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
-So far, I haven't taken advantage of `max_gamma` yet, this definitely is a TODO.
+So far, no advantage of `max_gamma` is taken yet, this definitely is a TODO.
 
-So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
+As of now, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
