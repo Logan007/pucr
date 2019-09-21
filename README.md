@@ -8,11 +8,11 @@ Having enjoyed reading that extremly inspring [article](https://github.com/Logan
 
 ## Use Case
 
-`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding supernode if necessary. To reduce traffic load and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
+`n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding `supernode` if necessary. To reduce network traffic and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
 
 Today, most `edge` nodes presumably are desktop-like computers with a heap of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
-However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many precious CPU cycles. That is the reason for taking a closer look on compression algorithms offering that certain asymmetry.
+However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch`as one of the compression algorithms offering that certain asymmetry.
 
 ## Modifications vis-à-vis the Original
 
@@ -22,11 +22,11 @@ The following list of changes might be completed and explained textually more de
 
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixated 8-bit size.
 
-- General LZ offsets (for longer-than-two matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number of plainly encoded LSBs is performed.
+- General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number of plainly encoded LSBs is performed.
 
 - While determining the RLE and LZ costs, the longest match and _all_ shorter matches are checked.
 
-- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. ~~_Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops~~ _In fact, there was an bug in the lz offset lsb optimizer... The `ivanova.bin`-file now regularily gets compressed to 9605 bytes and to 9620 for all the fast lanes._
+- However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. ~~_Fun fact:_ The fastest `fast_lane` of `3` that just uses some default values results in even better compression for `ivanova.bin` (9620 bytes without header) than all slower modes! Maybe some potential left for optimizing the optimizing loops~~ _In fact, there was a bug in the lz offset lsb optimizer... The `ivanova.bin`-file now regularily gets compressed to 9605 (without header) bytes and to 9620 for all the fast lanes._
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
@@ -36,7 +36,9 @@ This all is _work in progress_! The code still is extremly polluted with `fprint
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
-So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look in how `pthread` could be of additional help here.
+So far, I haven't taken advantage of `max_gamma` yet, this definitely is a TODO.
+
+So far, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
@@ -46,4 +48,4 @@ The code should compile straight away by `gcc pucr.c -o pucr` to an executable c
 
 Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
 
-Any hint or support is welcome – just leave an _issue_!
+Any hint or support is welcome – just leave an _Issue_!
