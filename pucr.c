@@ -1,25 +1,21 @@
 #include <stdlib.h>
-//#include <ctype.h>
-#include <stdio.h> // !!!
-//#include <errno.h>
-//#include <fcntl.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
-// #include <stdbool.h>
+#include <stdbool.h>
 #include <string.h>
+
 
 #include <time.h>
 static clock_t start, end;
 static double cpu_time_used;
 
-// !!! #define	NONE	0xFFFF
 #define LZ	0x0000
-// !!! #define UNUSED  0x0001
 #define LIT	0x0002
 #define RLE	0x0003
 #define MARKED	0x0080
 
-struct node {
+struct pucr_node {
 	uint16_t	rle_count;
 	uint16_t	lz_count;
 	uint16_t	lz_offset;
@@ -67,7 +63,7 @@ struct node {
 //	 not using a rle rank table (if no_esc > 1 and '1111' is indicating unranked
 //	 rle character, common rle runs of 2 would take 16 or more bits and thus
 //	 unfortunately too expensive)
-// TODO: implement a shorter 'code' for LZ2, i.e. 'ESC00' instead of 'ESC000'.
+// DONE: implement a shorter 'code' for LZ2, i.e. 'ESC00' instead of 'ESC000'.
 //	 at least as long as 'ESC001' is not used, would save one bit per LZ2
 
 static void start_clock(void) {
@@ -106,9 +102,7 @@ static uint32_t pucr_init (void) {
 	for (int m=0;m<16;m++)  {
 		for (int p=0; p<16; p++) {
 			lz_offset_encoded_length[m][p]=m + ((p<m?0:p-m+1))*2+1 ; // !!! easier to understand, could be shortened for performance
-// fprintf (stderr, "%5u",lz_offset_encoded_length[m][p]);
 		}
-// fprintf (stderr, "\n");
 	}
 }
 
@@ -129,102 +123,18 @@ static uint8_t int_log2 (uint32_t x) {
 }
 
 
-static uint32_t update_rle_rank_table (struct node graph[], const uint8_t *inbuf, uint16_t in_len,
-				       uint16_t rle_occ[], uint8_t rle_rank[], uint8_t *rank_len) {
-	uint8_t character = inbuf [in_len-1];
-        uint16_t rle_count = 0;
+// ---=== RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE ===---
 
-        int16_t i;
-	for (i=0; i< 256; i++) rle_occ[i] = 0;
+static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint8_t *rank_len) {
 
-        for (i=in_len-1; i >= 0; i--) {
-                if (inbuf[i] == character) {
-                        rle_count++;
-                } else {
-                        // !!! the following line are for creating occurances table, for optimizing later
-                        /* count number of occuring (real) RLE runs (>1) per character */
-                        if (rle_count > 1) rle_occ[inbuf[i+1]]++;
-	// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i);
-                        rle_count = 1;
-                        character = inbuf[i];
-                }
-                graph[i].rle_count = rle_count;
-// fprintf (stderr, "Pos. %5u  RLE %5u  %c\n",i,rle_count,character); // !!!
-        }
-        // first position
-        if (rle_count > 1) rle_occ[inbuf[i+1]]++;
-// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i+1);
-
-        /* generate ranks */
-        uint16_t max_index, max_value;
-        for (i=0;i<15;i++) {
-                /* find chararcters with highest number of occurences
-                 * but not below 2 for ranks 3 and following */
-                max_value = (i < 3)?1:2;
-                max_index = 0xFFFF;
-                for (int j=0; j < 256; j++) {
-                        if (rle_occ[j] > max_value) {
-                                /* check that candidate J is not already in list */
-                                int k;
-                                for (k=0;k<i;k++) if ( j==rle_rank[k] ) break;
-                                if (k == i) {
-                                        max_value = rle_occ[j];
-                                        max_index = j;
-                                }
-                        }
-                }
-                if ( max_index != 0xFFFF ) {
-                        rle_rank[i] = max_index;
-                        *rank_len = *rank_len + 1;
-fprintf (stderr, "Rnk. %2u Occ. %5ux [%c]\n",i, rle_occ[max_index], max_index ); // !!!
-                } else {
-                        break;
-                }
-        }
-        *rank_len = i;
-        return (0);
-}
-
-
-static uint32_t count_rle (struct node graph[], const uint8_t *inbuf, uint16_t in_len,
-			   uint16_t rle_occ[], uint8_t rle_rank[], uint8_t *rank_len) {
-
-	uint8_t character = inbuf [in_len-1];
-	uint16_t rle_count = 0;
-
-	int32_t i; // required (as file size is 16 bit and i may fall bewlow 0)
-	for (i=in_len-1; i >= 0; i--) {
-
-		if (inbuf[i] == character) {
-			rle_count++;
-		} else {
-
-			// !!! the following line are for creating occurances table, for optimizing later
-			/* count number of occuring (real) RLE runs (>1) per character */
-			if (rle_count > 1) rle_occ[inbuf[i+1]]++;
-//				fprintf (stderr,"!!! RLE %c at %u !!!\n", inbuf[i+1],i);
-			rle_count = 1;
-
-			character = inbuf[i];
-
-		}
-		graph[i].rle_count = rle_count;
-
-// fprintf (stderr, "Pos. %5u  RLE %5u  %c\n",i,rle_count,character); // !!!
-	}
-	// first position
-	if (rle_count > 1) rle_occ[inbuf[i+1]]++;
-
-// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i+1); }
-
-	/* generate ranks */
 	uint16_t max_index, max_value;
+	int8_t i;
+
 	for (i=0;i<15;i++) {
-		/* find chararcters with highest number of occurences
+		/* find characters with highest number of occurences
 		 * but not below 2 for ranks 3 and following */
 		max_value = (i < 3)?1:2;
 		max_index = 0xFFFF;
-
 		for (int j=0; j < 256; j++) {
 			if (rle_occ[j] > max_value) {
 				/* check that candidate J is not already in list */
@@ -239,7 +149,7 @@ static uint32_t count_rle (struct node graph[], const uint8_t *inbuf, uint16_t i
 		if ( max_index != 0xFFFF ) {
 			rle_rank[i] = max_index;
 			*rank_len = *rank_len + 1;
-fprintf (stderr, "Rnk. %2u Occ. %5ux [%c]\n",i, rle_occ[max_index], max_index ); // !!!
+fprintf (stderr, "Rnk. %2u Occ. %5ux [%3u]\n",i, rle_occ[max_index], max_index ); // !!!
 		} else {
 			break;
 		}
@@ -248,12 +158,58 @@ fprintf (stderr, "Rnk. %2u Occ. %5ux [%c]\n",i, rle_occ[max_index], max_index );
 	return (0);
 }
 
-static uint32_t find_matches (struct node graph[], const uint8_t *inbuf, uint16_t in_len) {
-// !!! straight forward, no optimization yet, proof of concept for now
+static uint32_t update_rle_occ_from_graph (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
+		   uint16_t rle_occ[]) {
+
+	uint16_t i;
+	for (i=0; i<256; i++) rle_occ[i] = 0;
+
+	for (i=0; i < in_len; i=graph[i].next_node)
+		if (graph[i].way_to_go == RLE)
+			rle_occ[inbuf[i]]++;
+
+	return (0);
+}
+
+
+static uint32_t count_rle_and_generate_occ_from_inbuf (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
+			   uint16_t rle_occ[]) {
+
+	uint8_t character = inbuf [in_len-1];
+	uint16_t rle_count = 0;
+	int32_t i; // required (as file size is 16 bit and i may fall below 0); also needed outside loop -- really !!! ???
+
+	for (i=255; i>=0; i--) rle_occ[i] = 0;
+
+	for (i=in_len-1; i >= 0; i--) {
+
+		if (inbuf[i] == character) {
+			rle_count++;
+		} else {
+
+			// !!! the following line are for creating occurances table, for optimizing later
+			/* count number of occuring (real) RLE runs (>1) per character */
+			if (rle_count > 1) rle_occ[inbuf[i+1]]++;
+//				fprintf (stderr,"!!! RLE %c at %u !!!\n", inbuf[i+1],i);
+			rle_count = 1;
+			character = inbuf[i];
+		}
+		graph[i].rle_count = rle_count;
+
+// fprintf (stderr, "Pos. %5u  RLE %5u  %c\n",i,rle_count,character); // !!!
+	}
+	// first position
+	if (rle_count > 1) rle_occ[inbuf[i+1]]++;
+
+// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i+1); }
+}
+
+
+static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len) {
+
 	int i,j,k;
-
-
 	uint16_t lastocc[256][256];// NNN !!!
+
 	for (i=0;i<256;i++) for (j=0;j<256;j++) lastocc[i][j] = 0xFFFF;
 
 	for (i=0; i < in_len;i++ ) {
@@ -264,7 +220,7 @@ static uint32_t find_matches (struct node graph[], const uint8_t *inbuf, uint16_
 
 // we will be able to skip at least 2 characters when comparing
 // because we know we already have a 2-byte match.
-// even more if rle is longer in that position
+// even more if rle is longer in that position !!!
 int off = (graph[i].rle_count -1);
 off = off<=2?2:off;
 
@@ -293,7 +249,7 @@ off = off<=2?2:off;
 }
 
 
-static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_len,
+static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_t in_len,
 					       uint8_t no_esc,
 					       uint8_t *no_lz_offset_lsb, uint8_t *no_lz2_offset_bits) {
 
@@ -327,17 +283,17 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_
 	}
 	*no_lz_offset_lsb = min_no_lsb + 1;
 
-	int max_p = 16 - 3 - no_esc - 1;
+	int max_p = 16 - 2 - no_esc - 1;
 	int min_lz2_bits = int_log2 (in_len);
 	min_lz2_bits = (min_lz2_bits <= 8)?min_lz2_bits:8;
 	int max_saving = 0;
 	for (int p=0; p<max_p; p++) {
 		// count the bits saved for each LZ2 possible (i.e. if offset fits in p bits)
 		int gained = 0;
-		for (int q=0; q<=p; q++) gained += (lz2_occ[q] * (16 - (p+1 + no_esc +3)));
+		for (int q=0; q<=p; q++) gained += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
 		// lost bits due to unused LZ2 opportunities as offset length is longer than p bits
 		int lost = 0;
-		for (int q=p+1; q<max_p; q++) lost += (lz2_occ[q] * (16 - (p+1 + no_esc +3)));
+		for (int q=p+1; q<max_p; q++) lost += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
 		// weigh against each other and store if minimum
 		if ((gained-lost) > max_saving)  {
 			max_saving = gained-lost;
@@ -369,7 +325,7 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct node graph[], uint16_t in_
        and mode 0 is restored to all mode 3 locations.
  */
 
-static uint32_t optimize_esc (struct node graph[], const uint8_t *inbuf, uint16_t in_len,
+static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
                               uint8_t no_esc, int *startEscape) {
 
     int i, j, states = (1<<no_esc);
@@ -391,7 +347,6 @@ static uint32_t optimize_esc (struct node graph[], const uint8_t *inbuf, uint16_
 	if (graph[i].way_to_go == LIT) graph[i].way_to_go = MARKED;
 
     for (i=in_len-1; i>=0; i--) {
-// fprintf (stderr, "!!! noecs=%u -- i=%u: minp=%u\n",no_esc,i,minp);
         if (graph[i].way_to_go == MARKED) {
 	    graph[i].way_to_go = LIT;
             int k = (inbuf[i] >> esc8);
@@ -448,23 +403,13 @@ static uint32_t optimize_esc (struct node graph[], const uint8_t *inbuf, uint16_
 }
 
 
-static uint32_t reset_graph_path (struct node graph[], uint16_t in_len) {
-
-	for (int16_t i = in_len-1; i >= 0; i--) {
-		graph[i].next_node = i + 1;
-		graph[i].way_to_go = LIT;
-		graph[i].bits_to_end = 0;
-		graph[i].new_esc = 0;
-	}
-}
-
-
-static uint32_t find_best_path (struct node graph[], const uint8_t *inbuf, uint16_t in_len,
+static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 				uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
 				uint8_t no_esc,
 				uint8_t lz_lsb, uint8_t lz2_bits,
 				uint8_t fast_lane) {
-// !!! not for empty input
+
+// !!! not for empty input -- sure ???
 	/* create rle cost (per character) table w/o cost for following length value */
 	uint32_t rle_cost_table[256];
 	for (int j=0; j < 256; j++) {
@@ -479,10 +424,11 @@ static uint32_t find_best_path (struct node graph[], const uint8_t *inbuf, uint1
 			rle_cost_table[j] = 3 + int_log2(rank_len)+1 + 8;
 		}
 	}
+	/* however, it is some blur left here: depending on choices in the following optimizer loop, rle occurences and their
+	   cost may change again, which could affect optimizer choices again, which might change costs again, which might ... */
 
 	// graph[in_len] is the (virtual) EOF symbol
 	graph[in_len].bits_to_end = 0;
-
 	/* check for each node the best way to go */
 	for (int i=in_len-1; i >= 0; i--) {
 		uint32_t lit_cost;
@@ -512,7 +458,7 @@ static uint32_t find_best_path (struct node graph[], const uint8_t *inbuf, uint1
 		for (int j=graph[i].lz_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1) {
 			// in case j == 2, the offset to be encoded may not be larger than 2^lz2_bits; otherwise lz is no option
 			if ( (j == 2) && ((graph[i].lz_offset-2) >= (0x01 << lz2_bits)) ) break;
-			lz_cost = (j==2)?3+lz2_bits:
+			lz_cost = (j==2)?2+lz2_bits:
 				  int_log2(j-1)*2+1 + lz_lsb + int_log2(((graph[i].lz_offset-j)>>lz_lsb)+1)*2+1;
 			lz_cost += graph[i+j].bits_to_end;
 			if (lz_cost < min) {
@@ -599,7 +545,7 @@ static void put_n_bits (int byte, int bits) {
 }
 
 
-static uint32_t output_path (struct node graph[], const uint8_t *inbuf, uint16_t in_len,
+static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 			uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
 			uint8_t start_esc, uint8_t no_esc,
 			uint8_t lz_lsb, uint8_t lz2_bits) {
@@ -627,7 +573,7 @@ static uint32_t output_path (struct node graph[], const uint8_t *inbuf, uint16_t
 
 	// output data
 	uint8_t no_rle_char_esc_bits = (rank_len==0)?0 : int_log2(rank_len)+1;
-fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits); 
+fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 
 	for (int i=0; i!=in_len; i=graph[i].next_node) {
 
@@ -663,9 +609,9 @@ fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 */				put_n_bits (current_esc_8, no_esc);
 				if ( (graph[i].next_node-i) == 2 ) {
 					// LZ2: ESC + 000 + LZ2 OFFSET (lz2_bits)
-	                                put_bit (0); put_bit (0); put_bit (0);
+	                                put_bit (0); put_bit (0); // put_bit (0);
 					put_n_bits (graph[i].lz_offset-2, lz2_bits);
-//					fprintf (stderr, " {%u} ", no_esc + 3 + lz2_bits);
+//					fprintf (stderr, " {%u} ", no_esc + 2 + lz2_bits);
 				} else {
 					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_len ...
 					put_value (graph[i].next_node - i - 1);
@@ -721,13 +667,15 @@ uint32_t pucrunch_256_encode (uint8_t *outbuf,uint32_t *out_len,
 
 start_clock();
 
-	struct node graph[65536];
+	struct pucr_node graph[65536];
 	uint16_t rle_occ[256];
 	uint8_t rle_rank[15];
 	uint8_t rank_len;
 
-	reset_graph_path (graph, in_len);
-	count_rle (graph, inbuf, in_len, rle_occ, rle_rank, &rank_len);
+	// reset_graph_path (graph, in_len);
+	count_rle_and_generate_occ_from_inbuf (graph, inbuf, in_len, rle_occ);
+	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
+
 fprintf (stderr, "--- COUNTING RLE: ");
 print_clock(); start_clock();
 	find_matches (graph, inbuf, in_len); // !!! option for different weighting
@@ -750,12 +698,15 @@ print_clock(); start_clock();
 
 	if (fast_lane < 3) {
 		for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?9:4); no_esc++) {
-			reset_graph_path (graph, in_len);
+			// the first path generated using sane default
 			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits);
-//			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits);
+//			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 			int escaped = optimize_esc (graph, inbuf, in_len, no_esc, &start_esc);
-			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+
+if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
+if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
+if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 
 	            	/* Compare value: bits lost for escaping -- bits lost for prefix */
 			if ((graph[0].bits_to_end + (no_esc+3) * escaped) < min_no_bits) {
@@ -770,23 +721,25 @@ fprintf (stderr, "--- OPTIMIZING ESC %u: ", no_esc);
 print_clock(); start_clock();
 		}
 	} else {
-		// fast_lane == 3:
+		// fast_lane >= 3:
 		// just assume some sane defaults from above for further use
-		// fun fact: ivanova.bin gets better better comrpressed than with auto-autimizes settings
 		min_lz_lsb = lz_lsb;
 		min_lz2_bits = lz2_bits;
 		min_no_esc = 2;
 		min_start_esc = 0;
 	}
 	// (re-)calculate best path with the values found or set above
-//	reset_graph_path (graph, in_len);
+	// alternatively, store the best graph found in the loop so far... (memory!!!)
 	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
+if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
+if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
 	int escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc);
 	min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped; // "- escaped" is for those counted 9-bit LIT in find_best_path
 
 	output_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_start_esc, min_no_esc, min_lz_lsb, min_lz2_bits );
 
-fprintf(stderr, "-----== encoding stats ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:			%u\nOUT w/o header:		%u\n------------------------------\n",
+fprintf(stderr, "-----== encoding stats ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:				%u\nOUT w/o header:		%u\n------------------------------\n",
 	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rank_len, in_len, (min_no_bits + 7)>>3);
 
 	*out_len = (min_no_bits + 7) >> 3;
@@ -882,30 +835,22 @@ fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 
 	uint8_t current_esc = current_esc8 << (8 - no_esc);
 	uint8_t esc_mask = 0xFF00 >> no_esc;
-uint16_t lz2_cnt = 0;
-
+uint16_t rle_ranked_cnt = 0;
 	for (uint16_t cnt=0;cnt<len;) {
 		uint8_t first_fetch = up_GetBits(no_esc);
 		if (first_fetch == current_esc8) {
 			uint16_t fetch = up_GetValue();
 			if (fetch == 1) { // '1' in modified E. Gamma means the first bit is '0'
-				// investigate the following bits
-				switch ( up_GetBits(2) ) {
-					case LIT:
-						// get the new ESCape code
-						current_esc8 = up_GetBits(no_esc);
-						current_esc = current_esc8 << (8 - no_esc);
-						// fetch the rest of the LITeral
-						first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-						outbuf[cnt++] = first_fetch;
-//fprintf (stderr, "%u. LIT (%c)  --ESCAPED--\n", cnt-1, first_fetch);
-						break;
-					case RLE: {
+				// investigate the following bit(s)
+				if ( up_GetBits(1) ) {
+					if ( up_GetBits(1) ) {
+						// RLE
 						uint16_t count = up_GetValue()+1;
 						uint16_t character = up_GetValueMaxGamma (no_rle_char_esc_bits);
 						if ( character < (1<<no_rle_char_esc_bits) ) {
 							// ranked character
 							character = rle_rank[character-1];
+rle_ranked_cnt++;
 						} else {
 							// not ranked, get rid of the preceding, and already read sequence of '1....1'
 							character = (character-(1<<no_rle_char_esc_bits)) << (8-no_rle_char_esc_bits);
@@ -914,18 +859,22 @@ uint16_t lz2_cnt = 0;
 						}
 //fprintf (stderr, "%u. RLE (%u,%c)\n", cnt, count,character);
 						for (; count!=0; count--) outbuf[cnt++] = character;
-						break; }
-					case LZ: {
-						// to be specific, this is LZ2
-lz2_cnt++;
-						uint16_t offset = up_GetBits (lz2_bits);
-//fprintf (stderr, "%u. LZ (2,%u)\n", cnt, offset+2);
-						outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
-						outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
-						break; }
-					default:
-						// shall not happen
-						break;
+					} else {
+						// ESCaped LITeral
+						// get the new ESCape code
+						current_esc8 = up_GetBits(no_esc);
+						current_esc = current_esc8 << (8 - no_esc);
+						// fetch the rest of the LITeral
+						first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
+						outbuf[cnt++] = first_fetch;
+//fprintf (stderr, "%u. LIT (%c)  --ESCAPED--\n", cnt-1, first_fetch);
+					}
+				} else {
+					// LZ - to be specific, this is LZ2
+					uint16_t offset = up_GetBits (lz2_bits);
+// fprintf (stderr, "%u. LZ (2,%u)\n", cnt, offset+2);
+					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
+					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
 				}
 			} else {
 				// common LZ, the fetch already contains the LZ count
@@ -939,7 +888,6 @@ lz2_cnt++;
 				for (uint16_t i=0; i < fetch; i++) {
 					outbuf[cnt]=outbuf[cnt-fetch-offset]; cnt++;
 				}
-
 			}
 		} else {
 			// unESCaped LITeral, fetch the the rest
@@ -948,7 +896,6 @@ lz2_cnt++;
 //fprintf (stderr, "%u. LIT (%c)\n", cnt-1, first_fetch);
 		}
 	}
-fprintf (stderr, "LZ2 COUNT: %u\n", lz2_cnt);
 print_clock(); start_clock();
 	*out_len = len;
 }
@@ -960,7 +907,7 @@ int main(int argc, char* argv[]) {
 	pucr_init();
 //    if(argc != 2)
 //    {
-//        printf( "usage:  %s [-f={0,1,2,3}>]\ndata via stdin and stdout", argv[0] );
+//        printf( "usage:  %s [-f<{0,1,2,3}>]\ndata via stdin and stdout", argv[0] );
 //        return 0;
 //    }
 //
@@ -970,7 +917,7 @@ int main(int argc, char* argv[]) {
 
 	if (!buffer)
 	{
-		fprintf(stderr, "Memory error!");
+		fprintf(stderr, "memory error!");
 		return (-1);
 	}
 
@@ -981,9 +928,10 @@ int main(int argc, char* argv[]) {
 
 	pucrunch_256_encode (output, &outlen, buffer, fileLen, 0);
 	free(buffer);
-	fprintf (stderr, "pucrunch: %u --> %u bytes\n",fileLen, outlen);
-	pucrunch_256_decode (output, &outlen, out_buffer, outlen);
+	fprintf (stderr, "pucr: %u --> %u bytes\n",fileLen, outlen);
 
+//	fwrite (out_buffer, sizeof(char), outlen, stdout);
+	pucrunch_256_decode (output, &outlen, out_buffer, outlen);
 	fwrite (output, sizeof(char), outlen, stdout);
 
 	return(0);
