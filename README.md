@@ -26,6 +26,8 @@ The following list of changes might be completed and explained textually more de
 
 - While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
+- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range.
+
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
@@ -34,11 +36,13 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to 9567 (without header) bytes and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to headerless ~~9567~~9320 bytes (using Move-to-Front) and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
+
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _just_ requires 256 bytes of RAM for the alphabet and slightly more decompression code.
 
 As of now, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
