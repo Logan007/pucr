@@ -26,6 +26,7 @@ struct pucr_node {
 	uint16_t	next_node;
 	uint32_t	bits_to_end;
 	uint8_t 	new_esc;
+	uint8_t		lit_mtf;
 };
 
 
@@ -120,6 +121,34 @@ static uint8_t int_log2 (uint32_t x) {
 		n = n - (x >> 31);
 		return (30 - n);
 	}
+}
+
+
+// ---=== MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT ===---
+
+static uint8_t move_to_front_encode (uint8_t in_char,
+                                     uint8_t alphabet[]) {
+
+        // search letter in alphabet
+        uint16_t j= 0;
+        for (; j < 256; j++) if (alphabet[j]==in_char) break;
+
+        // move letter to front of alphabet
+        for (uint16_t k=j; k>0; k--) alphabet[k]=alphabet[k-1];
+        alphabet[0]=in_char;
+        return(j);
+}
+
+
+static uint8_t move_to_front_decode (uint8_t in_char,
+                                     uint8_t alphabet[]) {
+
+        uint8_t ret = alphabet[in_char];
+
+        // move letter to front of alphabet
+        for (uint16_t k=in_char; k>0; k--) alphabet[k]=alphabet[k-1];
+        alphabet[0]=ret;
+        return(ret);
 }
 
 
@@ -241,7 +270,7 @@ off = off<=2?2:off;
 				// naive weighting function: the longer the better // replace with weighting/boundary conditions later on !!!
 				if (k > graph[i].lz_count) {
 					graph[i].lz_offset = i-j; // store the 'real' offset
-					graph[i].lz_count=k;
+			graph[i].lz_count=k;
 				}
 			}
 		}
@@ -343,13 +372,20 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
         return 0;
     }
 
+    uint8_t alphabet[256]; for (i=0; i<256;i++) alphabet[i]=i;
+
     for (i=0; i != in_len; i = graph[i].next_node)
-	if (graph[i].way_to_go == LIT) graph[i].way_to_go = MARKED;
+	if (graph[i].way_to_go == LIT) {
+	    graph[i].way_to_go = MARKED;
+	    // store the mtf-encoded literal in the graph to preserve inbuf
+	    graph[i].lit_mtf = move_to_front_encode (inbuf[i], alphabet);
+	}
 
     for (i=in_len-1; i>=0; i--) {
         if (graph[i].way_to_go == MARKED) {
 	    graph[i].way_to_go = LIT;
-            int k = (inbuf[i] >> esc8);
+	    // use mtf-encoded literal for ESCape code evaluation
+            int k = (graph[i].lit_mtf >> esc8);
 
             /*
                 k are the matching bytes,
@@ -631,8 +667,9 @@ fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 					graph_current_esc = graph[i].new_esc;
 				}
 				//
-				if ( (inbuf[i] & current_esc_mask) != current_esc) {
-					put_n_bits (inbuf[i], 8);
+				if ( (graph[i].lit_mtf & current_esc_mask) != current_esc) {
+					// output the mtf-encoded literal
+					put_n_bits (graph[i].lit_mtf, 8);
 //					fprintf (stderr, " {%u} ",8);
 				} else {
 					// ESC = first bits of LITeral
@@ -644,8 +681,8 @@ fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 					current_esc_8 = current_esc >> (8 - no_esc);
 					put_n_bits (current_esc_8, no_esc);
 //					fprintf (stderr, "NEW ESCAPE: %u ", current_esc);
-					// rest of LITeral
-					put_n_bits (inbuf[i], 8- no_esc);
+					// rest of mtf-encoded LITeral
+					put_n_bits (graph[i].lit_mtf, 8- no_esc);
 //					fprintf (stderr, " {%u} ",8+3+no_esc);
 				}
 				break;
@@ -810,6 +847,8 @@ static uint32_t pucrunch_256_decode (uint8_t *outbuf,uint32_t *out_len,
 start_clock();
 	up_SetInput (inbuf);
 
+	uint8_t alphabet[256]; for (uint16_t i=0; i<256;i++) alphabet[i]=i;
+
 	// decompressed length
 	// datatype limits block size, needs to be signed for loop
 	int32_t len = (up_GetValue()-1)<<8;
@@ -860,13 +899,13 @@ rle_ranked_cnt++;
 //fprintf (stderr, "%u. RLE (%u,%c)\n", cnt, count,character);
 						for (; count!=0; count--) outbuf[cnt++] = character;
 					} else {
-						// ESCaped LITeral
+						// ESCaped mtf-encoded LITeral
 						// get the new ESCape code
 						current_esc8 = up_GetBits(no_esc);
 						current_esc = current_esc8 << (8 - no_esc);
-						// fetch the rest of the LITeral
+						// fetch the rest of the mtf-encoded LITeral
 						first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-						outbuf[cnt++] = first_fetch;
+						outbuf[cnt++] = move_to_front_decode (first_fetch, alphabet);
 //fprintf (stderr, "%u. LIT (%c)  --ESCAPED--\n", cnt-1, first_fetch);
 					}
 				} else {
@@ -892,7 +931,7 @@ rle_ranked_cnt++;
 		} else {
 			// unESCaped LITeral, fetch the the rest
 			first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-			outbuf[cnt++] = first_fetch;
+			outbuf[cnt++] = move_to_front_decode (first_fetch, alphabet);
 //fprintf (stderr, "%u. LIT (%c)\n", cnt-1, first_fetch);
 		}
 	}
