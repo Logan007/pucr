@@ -14,6 +14,8 @@ Today, most `edge` nodes presumably are desktop-like computers with a heap of CP
 
 However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch`as one of the compression algorithms offering that certain asymmetry.
 
+As soon as `pucr` reaches a usable state, I will have it added to my fork of `n2n`.
+
 ## Modifications vis-à-vis the Original
 
 The following list of changes might be completed and explained textually more detailed at a later point in time:
@@ -42,7 +44,11 @@ One possible string matching speedup that takes advantage of RLE is still lackin
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _just_ requires 256 bytes of RAM for the alphabet and slightly more decompression code.
+Another optimization step from the original is still missing: After determining the best path thorugh the graph (and thus the best LZ-mach lenghts which might be shorter than max), `pucr` should search for a maybe closer matches of that shorter length which could save a few bits for offset. A quick proof of concept revealed _minus 24 bytes_ for the `ivanova.bin` file. Coming soon.
+
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code.
+
+Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 1908 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be implemented until the end of the year – which one?
 
 As of now, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
