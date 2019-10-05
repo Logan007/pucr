@@ -12,7 +12,7 @@ Having enjoyed reading that extremly inspring [article](https://github.com/Logan
 
 Today, most `edge` nodes presumably are desktop-like computers with a heap of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
-However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch`as one of the compression algorithms offering that certain asymmetry.
+However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch` as one of the compression algorithms offering that certain asymmetry.
 
 As soon as `pucr` reaches a usable state, I will have it added to my fork of `n2n`.
 
@@ -24,17 +24,17 @@ The following list of changes might be completed and explained textually more de
 
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size.
 
-- General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number of plainly encoded LSBs is performed.
+- General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
 
 - While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
-- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range.
+- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences.
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
-- The header contains parameters for the mentioned optimizations such as the _number of LSBs or LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
+- The header contains parameters for the mentioned optimizations such as the _number of LSBs_ or _LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
-## Status, Thoughts, and To-Do
+## Status, To-Do and Thoughts
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
@@ -44,13 +44,13 @@ One possible string matching speedup that takes advantage of RLE is still lackin
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-Another optimization step from the original is still missing: After determining the best path thorugh the graph (and thus the best LZ-mach lenghts which might be shorter than max), `pucr` should search for a maybe closer matches of that shorter length which could save a few bits for offset. A quick proof of concept revealed _minus 24 bytes_ for the `ivanova.bin` file. Coming soon.
+Another optimization step from the original is still missing: After determining the best path through the graph (and thus the best LZ-mach lenghts which might be shorter than max), `pucr` should search for a maybe closer matches of that shorter length which could save a few more bits for offset. A quick proof of concept revealed _minus 24 bytes_ for the `ivanova.bin` file. Coming soon.
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code.
 
-Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 1908 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be implemented until the end of the year – which one?
+Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 1908 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be refined and implemented until the end of the year.
 
-As of now, compression of 1492 byte sized packets is quickly done on my 8 year old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
+As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
