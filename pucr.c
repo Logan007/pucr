@@ -18,7 +18,8 @@ static double cpu_time_used;
 struct pucr_node {
 	uint16_t	rle_count;
 	uint16_t	lz_count;
-	uint16_t	lz_offset;
+	uint16_t	lz_max_offset;
+	uint16_t	lz_cur_offset;
 	uint16_t	seen_before;
 //	uint8_t		hash;
 
@@ -178,7 +179,7 @@ static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint
 		if ( max_index != 0xFFFF ) {
 			rle_rank[i] = max_index;
 			*rank_len = *rank_len + 1;
-fprintf (stderr, "Rnk. %2u Occ. %5ux [%3u]\n",i, rle_occ[max_index], max_index ); // !!!
+// fprintf (stderr, "Rnk. %2u Occ. %5ux [%3u]\n",i, rle_occ[max_index], max_index ); // !!!
 		} else {
 			break;
 		}
@@ -234,16 +235,48 @@ static uint32_t count_rle_and_generate_occ_from_inbuf (struct pucr_node graph[],
 }
 
 
-static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len) {
+// ---=== LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ LZ ===---
+
+
+static uint32_t find_closer_match (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
+				   uint16_t pattern_start, uint16_t pattern_length, uint16_t min_match_start,
+                            	   uint16_t last_occ[256][256]) {
+
+        int j,k ;
+
+	// we will be able to skip at least 2 characters when comparing
+	// because we know we already have a 2-byte match.
+	// even more if rle is longer in that position !!!
+	int off = (graph[pattern_start].rle_count -1);
+	off = off<=2?2:off;
+//	graph[pattern_start].lz_cur_offset = graph[pattern_start].lz_max_offset; // 0xFFFF;
+        for (j=last_occ[inbuf[pattern_start]][inbuf[pattern_start+1]]; (j >= min_match_start) && (k != 0xFFFF); j=graph[j].seen_before) { // check at offset J for a match ...
+        	if (graph[pattern_start].rle_count != graph[j].rle_count) continue;
+               	k = j + off;
+                for (k=j+off; (k-j)<pattern_length; k++) { // ... of length (K-J)
+                	if (inbuf[k] != inbuf[pattern_start+(k-j)]) break; // no match
+	        }
+        	if (k > pattern_start) k = j; // even beyond pattern
+	        k -= j; // match length
+	        if (k >= pattern_length) {
+	                // treatment of a match found
+	        	graph[pattern_start].lz_cur_offset = pattern_start-j; // store the 'real' offset
+// fprintf (stderr, "   * closer match at offset %u (offset: %u instead of %u)\n",pattern_start,graph[pattern_start].lz_cur_offset,graph[pattern_start].lz_max_offset);
+	                break;
+                }
+        }
+}
+
+
+static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len, uint16_t last_occ[256][256]) {
 
 	int i,j,k;
-	uint16_t lastocc[256][256];// NNN !!!
 
-	for (i=0;i<256;i++) for (j=0;j<256;j++) lastocc[i][j] = 0xFFFF;
+	for (i=0;i<256;i++) for (j=0;j<256;j++) last_occ[i][j] = 0xFFFF;
 
 	for (i=0; i < in_len;i++ ) {
-		graph[i].seen_before = lastocc[inbuf[i]][inbuf[i+1]];
-		lastocc[inbuf[i]][inbuf[i+1]] = i;
+		graph[i].seen_before = last_occ[inbuf[i]][inbuf[i+1]];
+		last_occ[inbuf[i]][inbuf[i+1]] = i;
 
 // !!!	       graph[i].hash = inbuf[i]*3 + inbuf[i+1]*5 + inbuf[i]*7;
 
@@ -253,9 +286,9 @@ static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, ui
 int off = (graph[i].rle_count -1);
 off = off<=2?2:off;
 
-		graph[i].lz_offset = 0xFFFF; // !!! neccessary for msb-lsb-offset calculation of number of bits
+		graph[i].lz_max_offset = 0xFFFF; // !!! neccessary for msb-lsb-offset calculation of number of bits
 		graph[i].lz_count =  0x0000; // = no  match yet
-		for (j=lastocc[inbuf[i]][inbuf[i+1]]; j != 0xFFFF; j=graph[j].seen_before) { // check at offset J for a match ...
+		for (j=last_occ[inbuf[i]][inbuf[i+1]]; j != 0xFFFF; j=graph[j].seen_before) { // check at offset J for a match ...
 			if (graph[i].rle_count != graph[j].rle_count) continue;
 			k = j + off;
 //if (graph[i+off-1].hash == graph[k-1].hash) {
@@ -269,7 +302,7 @@ off = off<=2?2:off;
 				// treatment of a match found
 				// naive weighting function: the longer the better // replace with weighting/boundary conditions later on !!!
 				if (k > graph[i].lz_count) {
-					graph[i].lz_offset = i-j; // store the 'real' offset
+					graph[i].lz_max_offset = i-j; // store the 'real' offset
 			graph[i].lz_count=k;
 				}
 			}
@@ -293,9 +326,9 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 			if ((graph[i].next_node - i) >= 3) {
 				// for the 3-byte and longer matches: calculate the case with "p" pure LSB and the rest E.Gamma-coded
 			        for (int p=0; p <16; p++) // 0 = 1-bit offset, 1 = 2-bit offset, ...
-					lz_occ[p] += (p+1) + int_log2( ((graph[i].lz_offset-(graph[i].next_node-i))>>(p+1))+1 )*2+1;
+					lz_occ[p] += (p+1) + int_log2( ((graph[i].lz_cur_offset-(graph[i].next_node-i))>>(p+1))+1 )*2+1;
 			} else {
-				int p = int_log2 (graph[i].lz_offset - 2);
+				int p = int_log2 (graph[i].lz_cur_offset - 2);
 				p = p<=15?p:15;
 				lz2_occ[p]++;
 			}
@@ -442,7 +475,7 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
 static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 				uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
 				uint8_t no_esc,
-				uint8_t lz_lsb, uint8_t lz2_bits,
+				uint8_t lz_lsb, uint8_t lz2_bits, uint16_t last_occ[256][256],
 				uint8_t fast_lane) {
 
 // !!! not for empty input -- sure ???
@@ -493,9 +526,9 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 		/* !!! ref org line 1044: only shorters that are a power of two? */
 		for (int j=graph[i].lz_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1) {
 			// in case j == 2, the offset to be encoded may not be larger than 2^lz2_bits; otherwise lz is no option
-			if ( (j == 2) && ((graph[i].lz_offset-2) >= (0x01 << lz2_bits)) ) break;
+			if ( (j == 2) && ((graph[i].lz_max_offset-2) >= (0x01 << lz2_bits)) ) break;
 			lz_cost = (j==2)?2+lz2_bits:
-				  int_log2(j-1)*2+1 + lz_lsb + int_log2(((graph[i].lz_offset-j)>>lz_lsb)+1)*2+1;
+				  int_log2(j-1)*2+1 + lz_lsb + int_log2(((graph[i].lz_max_offset-j)>>lz_lsb)+1)*2+1;
 			lz_cost += graph[i+j].bits_to_end;
 			if (lz_cost < min) {
 				min = lz_cost;
@@ -504,9 +537,27 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 		}
 		// only if a minimum was found in the loop, add the number of ESCape bits
 		// otherwise, keep up the high cost of 0xFFFFFFFF
-		// !!! (min+1) == 0 is a bit hacky and relies on data type properties
-		lz_cost = (min+1)?min+no_esc:min;
+		// !!! (min+1) != 0 is a bit hacky and relies on data type properties
+		if (min+1) {
+			lz_cost = min + no_esc;
+			graph[i].lz_cur_offset = graph[i].lz_max_offset;
+			// if using a shorter-than-max match, we might find a closer one
+			// this will keep the output of the encoded current offset smaller
+			// and also might lead to a lower number of bits used for encoding LZ2/LZ offsets
+			if (fast_lane == 0) {
+				int used_match_length = lz_way-i;
+				if (used_match_length<graph[i].lz_count) { // LZ2 matches only in fast_lane 0
+					find_closer_match (graph, inbuf, in_len, i, used_match_length,i-graph[i].lz_max_offset+1, last_occ);
+					// recalculate costs
+					lz_cost = (used_match_length==2)?2+lz2_bits:
+						  int_log2(used_match_length-1)*2+1 + lz_lsb + int_log2(((graph[i].lz_cur_offset-used_match_length)>>lz_lsb)+1)*2+1;
+					lz_cost += graph[i+used_match_length].bits_to_end+no_esc;
+				}
+			}
+		} else {
+			lz_cost = min;
 
+		}
 		/* determine LIT cost (always possible), naively add 1 for
 		    ocasionally occuring LIT code "010" and new ESC bits.
 
@@ -606,10 +657,11 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	put_n_bits (lz2_bits,4);
 	// number of LSBs for LZ offset
 	put_n_bits (lz_lsb,4);
+fprintf (stderr, "HEADER SIZE: %u bits ~~ %u bytes\n", bitCount, (bitCount+7) >> 3);
 
 	// output data
 	uint8_t no_rle_char_esc_bits = (rank_len==0)?0 : int_log2(rank_len)+1;
-fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
+// fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 
 	for (int i=0; i!=in_len; i=graph[i].next_node) {
 
@@ -639,20 +691,20 @@ fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 			case LZ:
 /*				fprintf (stderr, "%u. LZ(%u,%u) --> %u [%u]",i,
 										graph[i].next_node-i,
-										graph[i].lz_offset,
+										graph[i].lz_max_offset,
 										graph[i].next_node,
 										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end);
 */				put_n_bits (current_esc_8, no_esc);
 				if ( (graph[i].next_node-i) == 2 ) {
 					// LZ2: ESC + 000 + LZ2 OFFSET (lz2_bits)
 	                                put_bit (0); put_bit (0); // put_bit (0);
-					put_n_bits (graph[i].lz_offset-2, lz2_bits);
+					put_n_bits (graph[i].lz_max_offset-2, lz2_bits);
 //					fprintf (stderr, " {%u} ", no_esc + 2 + lz2_bits);
 				} else {
 					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_len ...
 					put_value (graph[i].next_node - i - 1);
 					// ... and also E. Gamma coded LZ offset minus the actually used length of lz match(=next_node-i)
-					int off = (graph[i].lz_offset-(graph[i].next_node-i));
+					int off = (graph[i].lz_max_offset-(graph[i].next_node-i));
 					// MSBs (+1 for E. Gamma code)
 					put_value ((off >> lz_lsb)+1);
 					// LSBs
@@ -715,7 +767,10 @@ start_clock();
 
 fprintf (stderr, "--- COUNTING RLE: ");
 print_clock(); start_clock();
-	find_matches (graph, inbuf, in_len); // !!! option for different weighting
+
+
+	uint16_t last_occ[256][256];
+	find_matches (graph, inbuf, in_len, last_occ); // !!! option for different weighting
 fprintf (stderr, "--- FINDING MATCHES: ");
 print_clock(); start_clock();
 
@@ -736,14 +791,14 @@ print_clock(); start_clock();
 	if (fast_lane < 3) {
 		for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?9:4); no_esc++) {
 			// the first path generated using sane default
-			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
 			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits);
-//			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+//			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
 			int escaped = optimize_esc (graph, inbuf, in_len, no_esc, &start_esc);
 
-if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
-if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+if (fast_lane < 2)	update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
+if (fast_lane < 2)	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
+if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
 
 	            	/* Compare value: bits lost for escaping -- bits lost for prefix */
 			if ((graph[0].bits_to_end + (no_esc+3) * escaped) < min_no_bits) {
@@ -767,16 +822,16 @@ print_clock(); start_clock();
 	}
 	// (re-)calculate best path with the values found or set above
 	// alternatively, store the best graph found in the loop so far... (memory!!!)
-	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, last_occ, fast_lane);
 if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
 if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, last_occ, fast_lane);
 	int escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc);
 	min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped; // "- escaped" is for those counted 9-bit LIT in find_best_path
 
 	output_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_start_esc, min_no_esc, min_lz_lsb, min_lz2_bits );
 
-fprintf(stderr, "-----== encoding stats ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:				%u\nOUT w/o header:		%u\n------------------------------\n",
+fprintf(stderr, "-----== encoding stats ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:			%u\nOUT w/o header:		%u\n------------------------------\n",
 	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rank_len, in_len, (min_no_bits + 7)>>3);
 
 	*out_len = (min_no_bits + 7) >> 3;
@@ -869,7 +924,7 @@ start_clock();
 	// number of LSBs for LZ offset
 	uint8_t lz_lsb = up_GetBits(4);
 
-fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		%6u\n#LZ2 OFFSET BITS	%6u\n#RANKED RLEs		%6u\nIN:			%6u\nOUT w/o header:		%6u\n------------------------------\n",
+fprintf(stderr, "-----== decoding stats ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		%6u\n#LZ2 OFFSET BITS	%6u\n#RANKED RLEs		%6u\nIN w/o header:		%6u\nOUT:			%6u\n------------------------------\n",
 	no_esc, lz_lsb, lz2_bits, rank_len, in_len, len);
 
 	uint8_t current_esc = current_esc8 << (8 - no_esc);
