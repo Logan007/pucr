@@ -38,23 +38,21 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to headerless ~~9567~~ ~~9320~~ __9314__ bytes (using Move-to-Front, search for closer LZ matches if using shorter matches) and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
+The `ivanova.bin`-file now regularily gets compressed to headerless __9314...9324__ bytes (currently, the graph's bitcount  differs from the actual output length by some bits - will be fixed) and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-Another optimization step from the original ~~is still missing~~ has just been implemented: After determining the best path through the graph (and thus the best LZ-mach lenghts which might be shorter than max), `pucr` should search for maybe closer matches of that shorter length which could save a few more bits for offset. A quick proof of concept revealed _minus ~~24~~ 6 bytes_ for the `ivanova.bin` file. ~~Coming soon.~~ 
-
-The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code.
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code – in case of background transfer, couldn't the FDD help out before transmission as Move-to-Front is 8 bit --> 8 bit?
 
 Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 1908 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be refined and implemented until the end of the year.
 
-As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. However, I will try to look deeper in how `pthread` could be of additional help here.
+As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc results in a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
-The code should compile straight away by `gcc pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
+The code should compile straight away by `gcc -O3 pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
 
 ``./pucr < ivanova.bin > ivanova.bin.pu.upu``
 
