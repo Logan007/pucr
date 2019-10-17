@@ -38,7 +38,7 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to headerless __9314...9324__ bytes (currently, the graph's bitcount  differs from the actual output length by some bits - will be fixed) and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
+The `ivanova.bin`-file now regularily gets compressed to headerless __9314__ bytes and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
