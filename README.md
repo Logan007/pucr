@@ -46,7 +46,7 @@ So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code – in case of background transfer, couldn't the FDD help out before transmission as Move-to-Front is 8 bit --> 8 bit?
 
-Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 1908 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be refined and implemented until the end of the year.
+Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 530 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be refined and implemented until the end of the year.
 
 As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc results in a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
 
