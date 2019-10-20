@@ -30,7 +30,7 @@ The following list of changes might be completed and explained textually more de
 
 - All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences.
 
-- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed where beneficial. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bis, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets their own Huffman-tree – but only, if it saves bits. First trials conducted show that so far, only the `00...`-symbols seem to save enough to afford the costs of a tree; maybe that is another consequence of the preceding Move-to-Front. The tree gets bitwisely encoded in the header.
+- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed where beneficial. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets their own Huffman-tree – but only, if it saves bits. First trials show that so far, only the `00...`-symbols seem to save enough to afford the costs of a tree; maybe that is another consequence of the preceding Move-to-Front. The tree bitwisely gets encoded to the header.
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
@@ -46,7 +46,7 @@ One possible string matching speedup that takes advantage of RLE is still lackin
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code – in case of background transfer, couldn't the FDD help out before transmission as Move-to-Front is 8 bit --> 8 bit?
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals.
 
 As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc results in a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
 
