@@ -58,4 +58,6 @@ The code should compile straight away by `gcc -O3 pucr.c -o pucr` to an executab
 
 Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
 
+`!!!` Something strange has happened since the latest additions: Some (but way not all) files do not get (un)compressed correctly. It seems to hit especially text files. That will require some in depth debugging. Just be warned. `!!!`
+
 Any hint or support is welcome – just leave an _Issue_!
