@@ -30,6 +30,9 @@ The following list of changes might be completed and explained textually more de
 
 - All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences.
 
+- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed where beneficial. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 - number_of_escape_bits`, are Huffman-coded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of 2 ESCape bits, gets their own Huffman-tree – only, if it saves bits. First trials show that so far, only the `00`-symbols seem to save enough to afford the costs of a tree; maybe that is a result of the preceding Move-to-Front.
+The tree gets encoded in the header bitwise.
+
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs_ or _LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
@@ -38,15 +41,13 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to headerless __9314__ bytes and a few more for the fast lanes. By the way, the header would add 20 bytes in this case.
+The `ivanova.bin`-file now regularily gets compressed to __9268__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals: It _temporarily_ requires _only_ 256 bytes of RAM for the alphabet and slightly more decompression code – in case of background transfer, couldn't the FDD help out before transmission as Move-to-Front is 8 bit --> 8 bit?
-
-Having Move-to-Front encoding in place, a following huffman encoding step on the LITerals might be beneficial. Some early and dirty-coded tries look promising at least for `ivanova.bin` (maybe minus another 530 _bits_ already including the tree) – not so much for the shorter ethernet packet sized files. To be refined and implemented until the end of the year.
 
 As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc results in a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
 
