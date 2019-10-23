@@ -28,7 +28,9 @@ The following list of changes might be completed and explained textually more de
 
 - While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
-- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences.
+- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences. However, as it is context-dependant, there are some cases which achieve better compression skipping Move-to-Front. Thus, `pucr` figures out whether it is better to take advantage of it – or not.
+
+- The Move-to-Front received a 'second line of defence'. i.e. a the index after which the literals are inserted (standard Move-to-Front always uses `0`) is parametrized. This is beneficial for repeating LITerals – those would get sorted below that certain index. That could be the case, if the same LITeral gets re-used at the next LITeral position but especially for non-ranked RLEs.
 
 - Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed where beneficial. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets their own Huffman-tree – but only, if it saves bits. First trials show that so far, only the `00...`-symbols seem to save enough to afford the costs of a tree; maybe that is another consequence of the preceding Move-to-Front. The tree bitwisely gets encoded to the header.
 
@@ -40,15 +42,15 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __9268__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __9250__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. However, as it is context-dependant, there might be some cases which achieve better compression skipping Move-to-Front. Thus, a natural action item would be to let `pucr` figure out whether it is better to take advantage of it – or not. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals.
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals.
 
-As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc results in a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
+As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc gives a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
@@ -57,7 +59,5 @@ The code should compile straight away by `gcc -O3 pucr.c -o pucr` to an executab
 ``./pucr < ivanova.bin > ivanova.bin.pu.upu``
 
 Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
-
-~~`!!!` Something strange has happened since the latest additions: Some (but way not all) files do not get (un)compressed correctly. It seems to hit especially text files. That will require some in depth debugging. Just be warned. `!!!`~~ (fixed)
 
 Any hint or support is welcome – just leave an _Issue_!
