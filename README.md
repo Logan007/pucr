@@ -2,7 +2,7 @@
 
 ## Experimental Compression Playground
 
-Looking out for some suitable compression for the lightweight VPN software [`n2n`](https://github.com/ntop/n2n), I happened to come across Pasi Ojala's [`pucrunch`](http://a1bert.kapsi.fi/Dev/pucrunch/). Not only that it is extremly assymetric and thus lightweight in terms of decompression, documentation also is highly explainatory giving full particulars in a wonderfully comprehensable way.
+Looking out for some suitable compression for the lightweight VPN software [`n2n`](https://github.com/ntop/n2n), I happened to come across Pasi Ojala’s [`pucrunch`](http://a1bert.kapsi.fi/Dev/pucrunch/). Not only that it is extremly assymetric and thus lightweight in terms of decompression, documentation also is highly explainatory giving full particulars in a wonderfully comprehensable way.
 
 Having enjoyed reading that extremly inspring [article](https://github.com/Logan007/Pucr/blob/master/pucrunch/README.md) (converted to markdown, see pucrunch [folder](https://github.com/Logan007/Pucr/tree/master/pucrunch)) more than just several times, I started off to create my own implementation `pucr` which uses some of the original code and also includes some optimizations.
 
@@ -28,7 +28,7 @@ The following list of changes might be completed and explained textually more de
 
 - While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
-- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals' values in the lower range. Also, it could help to keep the number of escape bits low and this shortening all other regular ESCape sequences. However, as it is context-dependant, there are some cases which achieve better compression skipping Move-to-Front. Thus, `pucr` figures out whether it is better to take advantage of it – or not.
+- All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals’ values in the lower range. Also, it could help to keep the number of escape bits low and thus shortening all other regular ESCape sequences. However, as it is context-dependant, there are some cases which achieve better compression skipping Move-to-Front. Thus, `pucr` figures out whether it is better to take advantage of it – or not.
 
 - The Move-to-Front received a _Second Line of Defence_. i.e. the index after which the LITerals are inserted (standard Move-to-Front always uses `0`) is parametrized. This is beneficial for repeating LITerals – those would get sorted below that certain index. That could be the case, if the same LITeral gets re-used at the next LITeral position but especially for non-ranked RLEs.
 
@@ -44,13 +44,15 @@ This all is _work in progress_! The code still is extremly polluted with `fprint
 
 The `ivanova.bin`-file now regularily gets compressed to __9250__ bytes including the header and a few more for the fast lanes.
 
-One possible string matching speedup that takes advantage of RLE is still lacking, will follow.
+One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
 So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
 
-The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set. It is more an educated guess that even a CBM could easiliy perform Move-to-Front decoding for LITerals.
+To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern. The `find_matches` and the graph optimizer just do not take this case into account. It would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. This needs some thoughts.
 
-As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. Especially, the `-O3` option for gcc gives a lot of speed bonus. However, plans are to look deeper in how `pthread` could be of additional help here.
+The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
+
+As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. The roughly drafted code especially gains speed from `gcc`’s `-O3` option. However, plans are to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
@@ -58,6 +60,6 @@ The code should compile straight away by `gcc -O3 pucr.c -o pucr` to an executab
 
 ``./pucr < ivanova.bin > ivanova.bin.pu.upu``
 
-Hopefully, the two files are identical then. So far, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
+Hopefully, the two files are identical then. Up to now, a following `diff ivanova.bin ivanova.bin.pu.upu` has never complained yet.
 
 Any hint or support is welcome – just leave an _Issue_!
