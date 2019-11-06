@@ -46,7 +46,9 @@ The `ivanova.bin`-file now regularily gets compressed to __9250__ bytes includin
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
-So far, no advantage of `max_gamma` is taken yet, this definitely is a todo.
+So far, no advantage of `max_gamma` is taken yet. Is this is a definite todo? An implementation with manually set `max_gamma` for the LZ lengths did not show any compression gain... au contraire! Maybe for RLE lengths?
+
+Another finding while testing the use of LZ offset history (encoding those as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, and 4).
 
 To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` for the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs some thoughts and will be reconsidered in conjunction with RLE.
 
