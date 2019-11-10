@@ -42,15 +42,15 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __9250__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __9245__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
-So far, no advantage of `max_gamma` is taken yet. Is this is a definite todo? An implementation with manually set `max_gamma` for the LZ lengths did not show any compression gain... au contraire! Maybe for RLE lengths?
+So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1155) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
-Another finding while testing the use of LZ offset history (encoding those as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, and 4).
+Another finding while testing the use of LZ length history (encoding those as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, and 4). Shall we try history for LZ offset?
 
-To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` for the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs some thoughts and will be reconsidered in conjunction with RLE.
+To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` for the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
 
