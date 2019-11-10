@@ -10,6 +10,8 @@
 static clock_t start, end;
 static double cpu_time_used;
 
+#define NO_MAX_GAMMA 0xFF
+
 #define LZ	0x0000
 #define LIT	0x0002
 #define RLE	0x0003
@@ -20,8 +22,8 @@ struct pucr_node {
 	uint16_t	lz_count;
 	uint16_t	lz_max_offset;
 	uint16_t	lz_cur_offset;
+	uint32_t	lz_cost;
 	uint16_t	seen_before;
-//	uint8_t		hash;
 
 	uint16_t	way_to_go;
 	uint16_t	next_node;
@@ -109,19 +111,19 @@ static uint32_t pucr_init (void) {
 }
 
 
-static uint8_t int_log2 (uint32_t x) {
-	if (x < 65535) {
+static uint8_t int_log2 (uint16_t x) { // uint16_t x
+//	if (x < 65535) {
 		return (int_log2_lut[x]);
-	} else {
+//	} else {
 		/* taken from Henry S. Warren Jr.'s 2nd edition of Hacker's Delight */
-		uint8_t n = 0;
+/*		uint8_t n = 0;
 		if (x <= 0x0000FFFF) { n = n + 16; x = x << 16;}
 		if (x <= 0x00FFFFFF) { n = n +  8; x = x <<  8;}
 		if (x <= 0x0FFFFFFF) { n = n +  4; x = x <<  4;}
 		if (x <= 0x3FFFFFFF) { n = n +  2; x = x <<  2;}
 		n = n - (x >> 31);
 		return (30 - n);
-	}
+	}*/
 }
 
 
@@ -164,7 +166,7 @@ struct huffman_code_t {
 };
 
 struct huffman_node {
-    int32_t count, l, r;
+    int16_t count, l, r;
     bool used;
     struct huffman_code_t code;
 };
@@ -176,6 +178,7 @@ uint32_t huffman_tree_encode (struct huffman_node table[], uint16_t current_node
                               uint8_t no_symbol_bits) {
 
     if (table[current_node].l == -1) {
+
         // ouput '1' as code for a following leaf
         encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] | (0x80 >> (*tree_position & 0x07));
         *tree_position = *tree_position + 1;
@@ -185,7 +188,7 @@ uint32_t huffman_tree_encode (struct huffman_node table[], uint16_t current_node
             if ((cn >> i) & 0x01) {
 	        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] | (0x80 >> (*tree_position & 0x07));
 	    } else {
-	        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
+//	        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
 	    }
             *tree_position = *tree_position + 1;
         }
@@ -198,7 +201,7 @@ uint32_t huffman_tree_encode (struct huffman_node table[], uint16_t current_node
         table[current_node].code.code_len = current_code.code_len;
     } else {
         // output'0' to indicate following l and r which are the recursively determined respective sub-trees (0lr)
-        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
+//        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
         *tree_position = *tree_position + 1;
 
         // construct codeword (l=0)
@@ -231,12 +234,14 @@ uint32_t generate_one_huffman_tree_and_part_of_codebook (uint8_t huffman_tree[],
         // also: those that do not match the leading mask
         uint8_t preceding_bits8 = preceding_bits << no_symbol_bits;
         uint8_t mask = 0xFF00 >> (8 - no_symbol_bits);
-
+uint16_t cnt = 0;
         for (uint16_t i=0; i < 256; i++) {
             if ( (table[i].count == 0) | ((i & mask) != preceding_bits8) )
                 table[i].used = true;
             else
-                table[i].used = false;
+{                table[i].used = false;
+cnt++;
+}
             table[i].l = -1;
             table[i].r = -1;
         }
@@ -248,7 +253,7 @@ uint32_t generate_one_huffman_tree_and_part_of_codebook (uint8_t huffman_tree[],
 
             // LEFT SIDE
             uint32_t min = 0xFFFFFFFF;
-            uint32_t min_idx = -1;
+            int16_t min_idx = -1;
 	    // skip nodes from formerly created trees
             for (uint16_t i=0; i < head; i=(i==255)?*first_head+1:i+1) {
                 if (!table[i].used) {
@@ -296,67 +301,53 @@ uint32_t generate_one_huffman_tree_and_part_of_codebook (uint8_t huffman_tree[],
         struct huffman_code_t empty_code = {};
 	empty_code.code_len = 0;
 //	empty_code.code [0] = 0;
+
         huffman_tree_encode (table, head, empty_code, huffman_tree, huffman_tree_len_bits, no_symbol_bits);
 }
 
 
-uint32_t generate_huffman_trees_and_codebook (struct pucr_node graph[], uint8_t const *inbuf, uint16_t in_len, // !!! was const !!! inbuf
+uint32_t generate_huffman_trees_and_codebook (struct pucr_node graph[], uint8_t const *inbuf, uint16_t in_len,
                                               uint8_t huffman_tree[], uint16_t *huffman_tree_len_bits,
                                               struct huffman_node table[], uint16_t head_array[],
-                                              uint8_t no_symbol_bits) {
+                                              uint8_t no_symbol_bits,
+					      uint8_t first_tree_only) {
 
 	uint32_t ret = 0;
         uint8_t esc_mask = 0xFF00 >> (8-no_symbol_bits);
         uint8_t mask = 0x00FF >> (8-no_symbol_bits);
 
-// ---
-
-//        for (uint16_t i=0; i < 256; i++) table[i].count = 0;
-//        // count LITeral occurences
-//        for (uint16_t i=0; i < in_len; i=graph[i].next_node)
-//                if (graph[i].way_to_go == LIT)
-//                        table[  graph[i].cur_lit&mask  ].count++;
-//        *huffman_tree_len_bits = 0; uint16_t head = 255;
-//
-//        generate_one_huffman_tree_and_part_of_codebook (huffman_tree, huffman_tree_len_bits,
-//                                                         table, &head,
-//                                                         8, 0);
-//
-//        int32_t sum = 0;
-//        for (uint16_t j=0; j < mask+1; j++)
-//                 sum += table[j].count * (no_symbol_bits - table[j].code.code_len);
-//        fprintf (stderr, "A SINGLE (!) HUFFMAN FOR ALL SYMBOLS WITH %u BIT SYMBOLS SAVED %d BITS\n",no_symbol_bits, sum - *huffman_tree_len_bits);
-//        fprintf (stderr, "HEAD: %u    TREE LEN: %u BITS\n",head,*huffman_tree_len_bits);
-// ------
-
         for (uint16_t i=0; i < 256; i++) table[i].count = 0;
         // count LITeral occurences
-        for (uint16_t i=0; i < in_len; i=graph[i].next_node)
-                 if (graph[i].way_to_go == LIT)
-                        table[graph[i].cur_lit].count++;
+        for (uint16_t i=0; i < in_len; i=graph[i].next_node) {
+                 if (graph[i].way_to_go == LIT) {
+			table[graph[i].cur_lit].count++;
+		}
+	}
 
 	uint16_t head = 255;
 
-	for (uint16_t i=0; i<320;i++) huffman_tree[i]=0;
-
-//	uint8_t huffman_tree[320];
-//       uint16_t huffman_tree_len_bits = 0;
-//        *huffman_tree_len_bits = 0;
-
-
-// is 320 sufficent (including the indicators?) !!! ??? it should
+ // !!! do we really need this? not, if excplicitly setting '0' bits to zero
+	memset (huffman_tree, 0x00, 320);
 
         for (uint16_t i=0; i<(uint8_t)(1<<(8-no_symbol_bits)); i++) {
                 uint16_t old_tree_len_bits = *huffman_tree_len_bits;
                 // leave placeholder space for a 1-bit indicator
 		*huffman_tree_len_bits = *huffman_tree_len_bits + 1;
-		generate_one_huffman_tree_and_part_of_codebook (huffman_tree, huffman_tree_len_bits,
-                                                         table, &head,
-                                                         no_symbol_bits, i);
+		// go only to work if neccessary
+		if ( (!first_tree_only) || (i == 0) ) {
+			generate_one_huffman_tree_and_part_of_codebook (huffman_tree, huffman_tree_len_bits,
+		                                                         table, &head,
+                		                                         no_symbol_bits, i);
+		}
+
                 int32_t sum = 0;
+if ( (!first_tree_only) || (i == 0) ) {
                 for (uint16_t j=(i << no_symbol_bits); j < ((i+1) << no_symbol_bits); j++)
                          sum += table[j].count * (no_symbol_bits - table[j].code.code_len);
+}
+
 // fprintf (stderr, "--- HUFFMAN WITH %u BIT SYMBOLS WOULD SAVE %d BITS\n",no_symbol_bits, sum-(*huffman_tree_len_bits-old_tree_len_bits));
+
 		// if positive savings... (even the 1-bit indicator needs to pay off)
 		if ( (*huffman_tree_len_bits-old_tree_len_bits) < (sum+1) ) {
 			// set indicator to '1'
@@ -412,6 +403,7 @@ static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint
 	return (0);
 }
 
+
 static uint32_t update_rle_occ_from_graph (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 		   uint16_t rle_occ[]) {
 
@@ -463,18 +455,16 @@ static uint32_t count_rle_and_generate_occ_from_inbuf (struct pucr_node graph[],
 
 
 static uint32_t find_closer_match (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
-				   uint16_t pattern_start, uint16_t pattern_length, uint16_t min_match_start,
-                            	   uint16_t last_occ[256][256]) {
+				   uint16_t pattern_start, uint16_t pattern_length, uint16_t min_match_start) {
 
-        int j,k ;
+        uint16_t j,k ;
 
 	// we will be able to skip at least 2 characters when comparing
 	// because we know we already have a 2-byte match.
 	// even more if rle is longer in that position !!!
-	int off = (graph[pattern_start].rle_count -1);
+	uint16_t off = (graph[pattern_start].rle_count -1);
 	off = off<=2?2:off;
-//	graph[pattern_start].lz_cur_offset = graph[pattern_start].lz_max_offset; // 0xFFFF;
-        for (j=last_occ[inbuf[pattern_start]][inbuf[pattern_start+1]]; (j >= min_match_start) && (k != 0xFFFF); j=graph[j].seen_before) { // check at offset J for a match ...
+        for (j=graph[pattern_start].seen_before; (j >= min_match_start) && (j != 0xFFFF); j=graph[j].seen_before) { // check at offset J for a match ...
         	if (graph[pattern_start].rle_count != graph[j].rle_count) continue;
                	k = j + off;
                 for (k=j+off; (k-j)<pattern_length; k++) { // ... of length (K-J)
@@ -492,45 +482,71 @@ static uint32_t find_closer_match (struct pucr_node graph[], const uint8_t *inbu
 }
 
 
-static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len, uint16_t last_occ[256][256]) {
+static uint32_t prepare_last_seen_from_graph (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len) {
 
-	int i,j,k;
+	uint16_t last_occ [65536];
+	memset (last_occ, 0xFF, 0x20000);
 
-	for (i=0;i<256;i++) for (j=0;j<256;j++) last_occ[i][j] = 0xFFFF;
+	for (uint16_t i=0; i < in_len;i++ ) {
+		uint16_t idx = (inbuf[i] << 8) | inbuf[i+1];
+		graph[i].seen_before = last_occ[idx];
+		last_occ[idx] = i;
 
-	for (i=0; i < in_len;i++ ) {
-		graph[i].seen_before = last_occ[inbuf[i]][inbuf[i+1]];
-		last_occ[inbuf[i]][inbuf[i+1]] = i;
+	}
+}
 
-// !!!	       graph[i].hash = inbuf[i]*3 + inbuf[i+1]*5 + inbuf[i]*7;
 
-// we will be able to skip at least 2 characters when comparing
-// because we know we already have a 2-byte match.
-// even more if rle is longer in that position !!!
-int off = (graph[i].rle_count -1);
-off = off<=2?2:off;
+static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
+				uint16_t first_pos, uint16_t last_pos,
+				uint8_t recursive, uint8_t fast_lane, uint8_t lz_length_max_gamma) {
 
-		graph[i].lz_max_offset = 0xFFFF; // !!! neccessary for msb-lsb-offset calculation of number of bits
-		graph[i].lz_count =  0x0000; // = no  match yet
-		for (j=last_occ[inbuf[i]][inbuf[i+1]]; j != 0xFFFF; j=graph[j].seen_before) { // check at offset J for a match ...
-			if (graph[i].rle_count != graph[j].rle_count) continue;
-			k = j + off;
-//if (graph[i+off-1].hash == graph[k-1].hash) {
-			for (k=j+off; (k < i) && ((i+k-j)<in_len); k++) { // ... of length (K-J)
-				if (inbuf[k] != inbuf[i+(k-j)]) break;
-			}
-//}
-			if (k > i) k = j ; // no match
-			k -= j; // match length
-			if (k > 1) {
-				// treatment of a match found
-				// naive weighting function: the longer the better // replace with weighting/boundary conditions later on !!!
-				if (k > graph[i].lz_count) {
-					graph[i].lz_max_offset = i-j; // store the 'real' offset
-			graph[i].lz_count=k;
+	// a block should not be much shorter than 256...512 bytes
+	if ( (recursive > 0) && ((last_pos - first_pos) > 512) ) {
+		uint16_t sep = (last_pos - first_pos) * 43 / 64;
+		find_matches (graph, inbuf, in_len, first_pos, first_pos+sep, recursive-1, fast_lane, lz_length_max_gamma);
+		find_matches (graph, inbuf, in_len, first_pos+sep+1, last_pos, recursive-1, fast_lane, lz_length_max_gamma);
+	} else {
+		// preparing for pthreads:
+		// the following code could lateron be outsourced to distinct threads
+		uint16_t i,j,k, off;
+		for (i=first_pos; i <= last_pos;i+=fast_lane?graph[i].rle_count:1) {
+			graph[i].lz_max_offset = 0xFFFF; // !!! neccessary for msb-lsb-offset calculation of number of bits
+			graph[i].lz_count =  0x0000; // = no  match yet
+graph[i].lz_cost = 0;
+			// we will be able to skip at least 2 characters when comparing
+			// because we know we already have a 2-byte match.
+			// even more if rle is longer in that position
+			off = (graph[i].rle_count -1);
+			off = off<=2?2:off;
+			for (j=graph[i].seen_before; j != 0xFFFF; j=graph[j].seen_before) { // check at offset J for a match ...
+				if (graph[i].rle_count != graph[j].rle_count) continue;
+				k = j + off;
+				// if a match crosses last_pos, "< in_len" would be advantageous to "<=last_pos" ... !!! may be consider for fast_lane
+				for (k=j+off; (k < i) && ((i+(k-j))<in_len) && ( (k-j) < (3<<(lz_length_max_gamma-1)) ); k++) { // ... of length (K-J)
+					if (inbuf[k] != inbuf[i+(k-j)]) break;
+				}
+				if (k > i) k = j ; // no match
+				else  {
+					k -= j; // match length
+					// treatment of a match found
+					// naive weighting function: the longer the better // replace with weighting/boundary conditions later on !!!
+// experimental: try to calculate cost.
+// WHY does it result in a compression gain?!
+uint32_t gain = (k==2)?16-(3+8):
+	               k*8-(1 + int_log2(k-1)*2+1 + (i-j-k)<1024?11:10+int_log2((i-j-k)>>10)*2+1);
+
+
+//					if (k > graph[i].lz_count) {
+					if (gain > graph[i].lz_cost) {
+							graph[i].lz_max_offset = i-j; // store the 'real' offset
+							graph[i].lz_count=k; // ; -(off2-i); // k
+graph[i].lz_cost = gain;
+					}
 				}
 			}
 		}
+fprintf (stderr, "--- FINDING MATCHES %5u ... %5u: ",first_pos,last_pos);
+print_clock(); start_clock();
 	}
 }
 
@@ -539,11 +555,11 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 					       uint8_t no_esc,
 					       uint8_t *no_lz_offset_lsb, uint8_t *no_lz2_offset_bits) {
 
-	uint32_t lz_occ[16] = {0};
-	uint32_t lz2_occ[16] = {0};
-	// after all matches are finally determinded, calculate the optimum of lsb-msb coding ratio
+	uint16_t lz_occ[16] = {0};
+	uint16_t lz2_occ[16] = {0};
+	// after all matches are finally determined, calculate the optimum of lsb-msb coding ratio
 	// first step: count them, especially the bits their offsets need
-	for (int i=0; i != in_len; i=graph[i].next_node) {
+	for (uint16_t i=0; i != in_len; i=graph[i].next_node) {
 		if (graph[i].way_to_go == LZ) {
 			// lz_length is not necessarily the real way to go,
 			// but next_node is
@@ -561,7 +577,7 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 
 	uint32_t min_sum = 0xFFFFFFFF;
 	uint8_t min_no_lsb = 0;
-	for (int m=15; m>=0; m--) {
+	for (uint8_t m=15; m!=0xFF; m--) {
 		if (lz_occ[m] < min_sum) {
 			min_no_lsb = m;
 			min_sum = lz_occ[m];
@@ -569,17 +585,17 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 	}
 	*no_lz_offset_lsb = min_no_lsb + 1;
 
-	int max_p = 16 - 2 - no_esc - 1;
-	int min_lz2_bits = int_log2 (in_len);
+	uint8_t max_p = 16 - 2 - no_esc - 1;
+	uint16_t min_lz2_bits = int_log2 (in_len);
 	min_lz2_bits = (min_lz2_bits <= 8)?min_lz2_bits:8;
-	int max_saving = 0;
-	for (int p=0; p<max_p; p++) {
+	int32_t max_saving = 0;
+	for (uint8_t p=0; p<max_p; p++) {
 		// count the bits saved for each LZ2 possible (i.e. if offset fits in p bits)
-		int gained = 0;
-		for (int q=0; q<=p; q++) gained += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
+		int32_t gained = 0;
+		for (uint8_t q=0; q<=p; q++) gained += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
 		// lost bits due to unused LZ2 opportunities as offset length is longer than p bits
-		int lost = 0;
-		for (int q=p+1; q<max_p; q++) lost += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
+		int32_t lost = 0;
+		for (uint8_t q=p+1; q<max_p; q++) lost += (lz2_occ[q] * (16 - (p+1 + no_esc +2)));
 		// weigh against each other and store if minimum
 		if ((gained-lost) > max_saving)  {
 			max_saving = gained-lost;
@@ -591,6 +607,9 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 	*no_lz2_offset_bits = min_lz2_bits;
 	return (0);
 }
+
+
+// ---=== ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ===---
 
 
 /*
@@ -612,56 +631,52 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
  */
 
 static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
-                              uint8_t no_esc, int *startEscape,
+                              uint8_t no_esc, uint8_t *startEscape,
 			      uint8_t mtf, uint8_t mtf_second_line) {
 
-    int i, j, states = (1<<no_esc);
-    long minp = 0, minv = 0, other = 0;
-    long a[256]; /* needs int/long */
-    long b[256]; /* Remembers the # of escaped for each */
-    int esc8 = 8-no_esc;
+    uint16_t i;
+    int16_t j;
+    uint16_t states = (1<<no_esc);
+    int32_t minp = 0, minv = 0, other = 0;
+    int32_t a[256]; /* needs int/long */
+    int32_t b[256]; /* Remembers the # of escaped for each */
+
+    uint8_t esc8 = 8-no_esc;
 
     for (i=0; i<256; i++)
         b[i] = a[i] = -1;
 
-    if (states>256) {
-        fprintf(stderr, "Escape optimize: only 256 states (%d)!\n",
-                states);
-        return 0;
-    }
-
     uint8_t alphabet[256]; for (i=0; i<256;i++) alphabet[i]=i;
 
     for (i=0; i != in_len; i = graph[i].next_node)
-	if (graph[i].way_to_go == LIT) {
-	    graph[i].way_to_go = MARKED;
-	    // store the (maybe to be mtf-encoded) literal in the graph to preserve inbuf
-	    graph[i].cur_lit = mtf?move_to_front_encode (inbuf[i], alphabet, mtf_second_line):inbuf[i];
-	}
+        if (graph[i].way_to_go == LIT) {
+            graph[i].way_to_go = MARKED;
+            // store the (maybe to be mtf-encoded) literal in the graph to preserve inbuf
+            graph[i].cur_lit = mtf?move_to_front_encode (inbuf[i], alphabet, mtf_second_line):inbuf[i];
+        }
 
-    for (i=in_len-1; i>=0; i--) {
+    for (i=in_len-1; i != 0xFFFF; i--) {
         if (graph[i].way_to_go == MARKED) {
-	    graph[i].way_to_go = LIT;
-	    // use mtf-encoded literal for ESCape code evaluation
-            int k = (graph[i].cur_lit >> esc8);
+            graph[i].way_to_go = LIT;
+            // use mtf-encoded literal for ESCape code evaluation
+            int16_t k = (graph[i].cur_lit >> esc8);
 
             /*
                 k are the matching bytes,
                 minv is the minimum value of neccessary following escapes
                 minp is the minimum index, i.e. the esc code that currently delivers the least escapes
              */
+           graph[i].new_esc = (minp << esc8);
 
-            graph[i].new_esc = (minp << esc8);
-
-	    /* with k as esc code, there would be needed one more escape than the so-far minimum.
-	       not for the others, though. */
+            /* with k as esc code, there would be needed one more escape than the so-far minimum.
+               not for the others, though. */
             a[k] = minv + 1;
-	    /* escapes happened so far. as long as k != minp, b[k] remains stuck at b[minp]+1.
-	       if we see a hit (k == minp), counting continues in the new b[k] track (with minp := k) */
+            /* escapes happened so far. as long as k != minp, b[k] remains stuck at b[minp]+1.
+               if we see a hit (k == minp), counting continues in the new b[k] track (with minp := k) */
             b[k] = b[minp] + 1;
 
             if (k==minp) {
-		/* this is a hit, it requires an escape */
+                /* this is a hit, it requires an escape */
                 minv++;
                 /* Minimum changed -> need to find a new minimum */
                 /* a[k] may still be the minimum */
@@ -673,20 +688,19 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
                             There may be others, but the first one that
                             is smaller than the old minimum is equal to
                             any other new minimum (because minv was
-			    incremented by 1 only).
+                            incremented by 1 only).
                          */
                         break;
                     }
                 }
             }
-	}
+        }
     }
-
-    /* Select the best value for the initial escape */
+   /* Select the best value for the initial escape */
     /* find smallest a[j] with smallest "smallest" escape code value */
     if (startEscape) {
         i = in_len;      /* make it big enough */
-        for (j=states-1; j>=0; j--) {
+        for (j=states-1; j >= 0; j--) {
             if (a[j] <= i) {
                 *startEscape = (j << esc8);
                 i = a[j];
@@ -697,18 +711,21 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
 }
 
 
+// ---=== PATH FINDER   PATH FINDER   PATH FINDER   PATH FINDER   PATH FINDER ===---
+
+
 static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 				uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
 				uint8_t no_esc,
-				uint8_t lz_lsb, uint8_t lz2_bits, uint16_t last_occ[256][256],
+				uint8_t lz_lsb, uint8_t lz2_bits,
 				uint8_t fast_lane) {
 
 // !!! not for empty input -- sure ???
 	/* create rle cost (per character) table w/o cost for following length value */
-	uint32_t rle_cost_table[256];
-	for (int j=0; j < 256; j++) {
+	uint16_t rle_cost_table[256];
+	for (uint16_t j=0; j < 256; j++) {
 		/* is it a ranked character? */
-		int k;
+		uint8_t k;
 		for (k=0; k < rank_len; k++) if ( j == rle_rank[k] ) break;
 		if (k != rank_len) {
 			// ranked
@@ -725,16 +742,15 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 	// graph[in_len] is the (virtual) EOF symbol
 	graph[in_len].bits_to_end = 0;
 	/* check for each node the best way to go */
-	for (int i=in_len-1; i >= 0; i--) {
-		uint32_t lit_cost;
-		uint32_t lz_cost, lz_way;
-		uint32_t rle_cost, rle_way;
+	for (uint16_t i=in_len-1; i!=0xFFFF ; i--) {
+		uint32_t rle_cost, lz_cost, lit_cost;
 		uint32_t min = 0xFFFFFFFF;
+		uint16_t rle_way, lz_way;
 
 		/* determine possible rle costs */
 		/* this loops also checks for all shorter lengths */
 		/* !!! ref org line 1044: only shorter ones that are a power of two? */
-		for (int j=graph[i].rle_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1 ) {
+		for (uint16_t j=graph[i].rle_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1 ) {
 			rle_cost = rle_cost_table[inbuf[i]] + int_log2(j-1)*2+1;
 			rle_cost += graph[i+j].bits_to_end;
 			if (rle_cost < min) {
@@ -742,7 +758,6 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 				rle_way = i+j;
 			}
 		}
-
 		// only if a new minimum was found, add no_esc
 		// otherwise, keep up the high cost of 0xFFFFFFFF
 		// !!! (min+1) == 0 is a bit hacky and relies on data type properties
@@ -751,7 +766,7 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 		/* determine possible LZ cost */
 		min = 0xFFFFFFFF;
 		/* !!! ref org line 1044: only shorters that are a power of two? */
-		for (int j=graph[i].lz_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1) {
+		for (uint16_t j=graph[i].lz_count; j > 1; j=fast_lane?1<<(int_log2(j)-1):j-1) {
 			// in case j == 2, the offset to be encoded may not be larger than 2^lz2_bits; otherwise lz is no option
 			if ( (j == 2) && ((graph[i].lz_max_offset-2) >= (0x01 << lz2_bits)) ) break;
 			lz_cost = (j==2)?2+lz2_bits:
@@ -771,10 +786,10 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 			// if using a shorter-than-max match, we might find a closer one
 			// this will keep the output of the encoded current offset smaller
 			// and also might lead to a lower number of bits used for encoding LZ2/LZ offsets
-			if (fast_lane == 0) {
-				int used_match_length = lz_way-i;
-				if (used_match_length<graph[i].lz_count) { // LZ2 matches only in fast_lane 0
-					find_closer_match (graph, inbuf, in_len, i, used_match_length,i-graph[i].lz_max_offset+1, last_occ);
+			if (fast_lane == 0) { // only in fast_lane 0
+				uint16_t used_match_length = lz_way-i;
+				if (used_match_length<graph[i].lz_count) {
+					find_closer_match (graph, inbuf, in_len, i, used_match_length,i-graph[i].lz_max_offset+1);
 					// recalculate costs
 					lz_cost = (used_match_length==2)?2+lz2_bits:
 						  int_log2(used_match_length-1)*2+1 + lz_lsb + int_log2(((graph[i].lz_cur_offset-used_match_length)>>lz_lsb)+1)*2+1;
@@ -793,11 +808,11 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 		    counted in the optimzize_escape step */
 		lit_cost = 8+graph[i+1].bits_to_end ; // + 1 ??? !!! ;
 
-		if ( (rle_cost < lz_cost) && (rle_cost < lit_cost) ) {
+		if ( (rle_cost <= lz_cost) && (rle_cost < lit_cost) ) {
 			graph[i].way_to_go = RLE;
 			graph[i].next_node = rle_way;
 			graph[i].bits_to_end = rle_cost;
-		} else if ( (lz_cost <= rle_cost) && (lz_cost < lit_cost) ) {
+		} else if ( (lz_cost < rle_cost) && (lz_cost < lit_cost) ) {
 			graph[i].way_to_go = LZ;
 			graph[i].next_node = lz_way;
 			graph[i].bits_to_end = lz_cost;
@@ -810,9 +825,12 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 }
 
 
-static int outPointer = 0;
+// ---=== OUTPUT OUTPUT OUTPUT OUTPUT OUTPUT OUTPUT OUTPUT OUTPUT OUTPUT ===---
+
+
+static uint16_t outPointer = 0;
 static uint8_t bitMask = 0x80;
-static int bitCount = 0;
+static uint32_t bitCount = 0;
 #define OUT_SIZE 65536
 static int8_t out_buffer [OUT_SIZE];
 
@@ -835,7 +853,7 @@ bitCount++;
 }
 
 
-static void put_value (int value) {
+static void put_value (int value, int maxGamma) {
     int bits = 0, count = 0;
 
     while (value>1) {
@@ -844,7 +862,7 @@ static void put_value (int value) {
         count++;
         put_bit (1);
     }
-// !!!    if (count<maxGamma) // no max_gamma yet !!!
+    if (count<maxGamma)
         put_bit (0);
     while (count--) {
         put_bit ((bits & 1));     /* output is reversed again -> same as value */
@@ -863,7 +881,7 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 			uint16_t *out_len,
 			uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
 			uint8_t start_esc, uint8_t no_esc, uint8_t mtf, uint8_t mtf_second_line,
-			uint8_t lz_lsb, uint8_t lz2_bits,
+			uint8_t lz_lsb, uint8_t lz2_bits, uint8_t lz_length_max_gamma,
 			struct huffman_node table[], uint16_t head_array[], uint8_t huffman_tree[], uint16_t huffman_tree_len_bits) {
 
 	uint8_t graph_current_esc = start_esc;
@@ -873,8 +891,10 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 
 	// output header
 	// decompressed length
-	put_value ((in_len>>8)+1);
+	put_value ((in_len>>8)+1, NO_MAX_GAMMA);
 	put_n_bits (in_len,8);
+	// lz length max gamma
+	put_n_bits (lz_length_max_gamma,4);
 	// number of ESCape bits and first ESCape sequence
 	put_n_bits (no_esc,4);
 	put_n_bits (current_esc_8,no_esc);
@@ -890,34 +910,50 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	if (mtf) put_bit (1); else put_bit (0);
 	if (mtf) put_n_bits (mtf_second_line,8);
 	// huffman tree(s)
-	uint16_t i;
-	for (i=0; i < huffman_tree_len_bits; i=i+8) {
-		uint8_t no_bits = (uint16_t)(huffman_tree_len_bits-i)>=8?8:(huffman_tree_len_bits-i);
-		put_n_bits (huffman_tree[i >> 3]>>(8-no_bits), no_bits );
+	if ( huffman_tree_len_bits != (uint8_t)(0x001 << no_esc) && (huffman_tree_len_bits != 0) )
+	{
+fprintf(stderr, "HUFFMAN: %u BITS FOR TREE\n", huffman_tree_len_bits);
+		put_bit(1);
+		uint16_t i;
+		for (i=0; i < huffman_tree_len_bits; i=i+8) {
+			uint8_t no_bits = (uint16_t)(huffman_tree_len_bits-i)>=8?8:(huffman_tree_len_bits-i);
+			put_n_bits (huffman_tree[i >> 3]>>(8-no_bits), no_bits );
+		}
+	} else {
+fprintf(stderr, "HUFFMAN: NO TREE\n");
+		put_bit(0);
 	}
-
 	// derive further parameters
 	uint8_t no_rle_char_esc_bits = (rank_len==0)?0 : int_log2(rank_len)+1;
 // fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 
+int16_t old_lz_length[4] = {0,0,0,0};
+uint16_t esc_seq_count = 0;
+uint16_t lz_len[256] = {0};
+uint16_t rle_len[256] = {0};
+uint16_t missed_rle2  = 0;
+uint16_t rle2_ranked = 0;
 	// output data
-	for (int i=0; i!=in_len; i=graph[i].next_node) {
+	for (uint16_t i=0; i!=in_len; i=graph[i].next_node) {
 // int old = bitCount;
 		switch (graph[i].way_to_go) {
 			case RLE:
-//				fprintf (stderr, "%u. RLE(%c,%u) --> %u [%u]",i,inbuf[i], graph[i].next_node - i, graph[i].next_node,  graph[i].bits_to_end - graph[graph[i].next_node].bits_to_end);
+fprintf(stderr,"");
+uint16_t rle = graph[i].next_node -i;
+rle = rle>63?63:rle;
+rle_len[rle]++;
 				// ESC ++ 011
-
 				put_n_bits (current_esc_8, no_esc);
 				put_bit (0); put_bit (1); put_bit (1);
                                 // output RLE count (real count minus 1, i.e. 1 instead of 2 etc.) E. Gamma coded
-                                put_value (graph[i].next_node - i - 1);
+                                put_value (graph[i].next_node - i - 1, NO_MAX_GAMMA);
 				// check if it is a ranked character
-				int k;
+				uint8_t k;
 				for (k=0; k < rank_len; k++) if ( inbuf[i] == rle_rank[k] ) break;
 				if (k != rank_len) {
 					// is ranked: E. Gamma coded pointer to rank list
-					put_value (k+1);
+					put_value (k+1, NO_MAX_GAMMA);
+if (rle==2) rle2_ranked++;
 //					fprintf (stderr, " {%u} ", no_esc + 3 + int_log2(k+1)*2+1 + int_log2(graph[i].next_node - i - 1)*2+1);
 				} else {
 					// not ranked: determine '11..11'-code length (already determined outside loop) followed by character
@@ -925,26 +961,55 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 					put_n_bits (inbuf[i], 8);
 //					fprintf (stderr, " {%u} ", no_esc + 3 + no_rle_char_esc_bits + 8 + int_log2(graph[i].next_node - i - 1)*2+1);
 				}
+//				fprintf (stderr, "%u. RLE(%c,%u) --> %u [%u vs %u]\n",i,inbuf[i],graph[i].next_node-i,graph[i].next_node,graph[i].bits_to_end-graph[graph[i].next_node].bits_to_end, bitCount-old);
+esc_seq_count++;
 				break;
 			case LZ:
-//				fprintf (stderr, "%u. LZ(%u,%u) --> %u [%u]",i,
-//										graph[i].next_node-i,
-//										graph[i].lz_max_offset,
-//										graph[i].next_node,
-//										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end);
-				put_n_bits (current_esc_8, no_esc);
+/* if ( (graph[i].next_node-i) == 2 )	fprintf (stderr, "%u. LZ(%u,%u) --> %u [%u]\n",i,
+										graph[i].next_node-i,
+										graph[i].lz_cur_offset,
+										graph[i].next_node,
+										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end);
+*/				put_n_bits (current_esc_8, no_esc);
+uint16_t lz= graph[i].next_node -i;
+lz = lz>63?63:lz;
+lz_len[lz]++;
 				if ( (graph[i].next_node-i) == 2 ) {
 					// LZ2: ESC + 000 + LZ2 OFFSET (lz2_bits)
 	                                put_bit (0); put_bit (0); // put_bit (0);
 					put_n_bits (graph[i].lz_cur_offset-2, lz2_bits);
 //					fprintf (stderr, " {%u} ", no_esc + 2 + lz2_bits);
 				} else {
-					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_len ...
-					put_value (graph[i].next_node - i - 1);
+// n := length of 'LZ length' history
+// disabled for now, no compression gain
+// needs to be identical to 'n' in output
+uint16_t n=0;
+uint16_t j=0;
+for (;j<n;j++)
+if ((graph[i].next_node-i-1) == old_lz_length[j]) {
+	break;
+}
+
+if (j==n) {
+	old_lz_length[3] = old_lz_length[2];
+	old_lz_length[2] = old_lz_length[1];
+	old_lz_length[1] = old_lz_length[0];
+	old_lz_length[0] = graph[i].next_node-i-1;
+	j = graph[i].next_node-i-1+n;
+} else {
+	for (uint16_t k=j;k>0; k--)
+		old_lz_length[k] = old_lz_length[k-1];
+	old_lz_length[0] = graph[i].next_node-i-1;
+	j = j+2;
+}
+					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_max_len ...
+//					put_value (graph[i].next_node - i - 1 , lz_length_max_gamma);
+//j = graph[i].next_node-i-1;
+put_value (j , lz_length_max_gamma);
 					// ... and also E. Gamma coded LZ offset minus the actually used length of lz match(=next_node-i)
-					int off = (graph[i].lz_cur_offset-(graph[i].next_node-i));
+					uint16_t off = (graph[i].lz_cur_offset-(graph[i].next_node-i));
 					// MSBs (+1 for E. Gamma code)
-					put_value ((off >> lz_lsb)+1);
+					put_value ((off >> lz_lsb)+1, NO_MAX_GAMMA);
 					// LSBs
 					put_n_bits (off, lz_lsb);
 //					fprintf (stderr, " {%u} ", no_esc + int_log2(graph[i].next_node-i-1)*2+1 + int_log2((off>>lz_lsb)+1)*2+1 + lz_lsb);
@@ -955,13 +1020,22 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 										graph[i].next_node,
 										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end, bitCount-old);
 */				break;
+esc_seq_count++;
+
 			case LIT:
 //				fprintf (stderr, "%u. LIT(%c) --> %u [%u]",i,inbuf[i],graph[i].next_node, -graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end+(graph_current_esc == graph[i].new_esc?0:no_esc+3));
+if (inbuf[i] == inbuf[graph[i].next_node] && graph[graph[i].next_node].way_to_go == LIT) 
+missed_rle2++;
+
+
 				if (graph[i].new_esc != graph_current_esc) {
 //					fprintf (stderr, "  NEW possible ESC: %u", graph[i].new_esc);
 					graph_current_esc = graph[i].new_esc;
 				}
 				if ( (graph[i].cur_lit & current_esc_mask) != current_esc) {
+if (esc_seq_count > 10) fprintf (stderr, "ESC SEQ: %u\n", esc_seq_count);
+esc_seq_count=0;
+
 					// output the mtf-encoded literal
 // w/o HUFFMAN:				put_n_bits (graph[i].cur_lit, 8);
 					put_n_bits (graph[i].cur_lit >> (8-no_esc), no_esc);
@@ -970,17 +1044,18 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF)
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
 					else {
-						for (int j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
+						for (uint8_t j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
 							if ( table[graph[i].cur_lit].code.code[j >> 3] & (0x80 >> (j & 7)) )
-								put_bit(1); 
-							else 
+								put_bit(1);
+							else
 								put_bit(0);
-
 						}
 
 					}
 // fprintf (stderr, " {%u} ",8);
 				} else {
+esc_seq_count++;
+
 					// ESC = first bits of LITeral
 					put_n_bits (current_esc_8, no_esc);
 					// 010
@@ -994,10 +1069,10 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 					// select huffman tree if available
 					// eventually, use codebook for output
 
-					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF)
+					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF){
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
-					else {
-	                                        for (int j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
+					} else {
+	                                        for (uint8_t j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
 	                                                if ( table[graph[i].cur_lit].code.code[j >> 3] & (0x80 >> (j & 7)) )
 	                                                        put_bit(1); else put_bit(0);
 	                                        }
@@ -1017,13 +1092,49 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	flush_bits();
 	*out_len = (bitCount+7) >> 3;
 // fprintf (stderr, "TOTAL SIZE: %u BITS ~~ %u BYTES\n", bitCount, (bitCount+7) >> 3);
-
 //	printf ("OUT POINTER: %u\n", outPointer);
+// for(uint16_t h=0; h< 64;h++) fprintf(stderr, "LZ%3u: %5u x    RLE%3u: %5u\n",h,lz_len[h],h,rle_len[h]);
+fprintf (stderr, "missed RLE2 opportunities: %u\n", missed_rle2);
+fprintf (stderr, "ranked RLE2s: %u\n", rle2_ranked);
+
+
 }
 
 
+
+void print_graph_stats (const struct pucr_node graph[], uint16_t in_len) {
+
+	uint16_t i = 0;
+
+	uint16_t rle_cnt = 0;
+	uint16_t rle_bytes = 0;
+
+	uint16_t max_lit_seq = 0;
+	uint16_t lit_seq = 0;
+	uint16_t lit_cnt = 0;
+
+
+	for (i=0; i != in_len; i=graph[i].next_node) {
+		if ( graph[i].way_to_go == RLE) {
+			rle_cnt++;
+			rle_bytes += graph[i].next_node - i;
+		}
+		if ( graph[i].way_to_go == LIT ) {
+			lit_cnt++;
+			lit_seq++;
+		} else {
+			if (lit_seq > max_lit_seq) max_lit_seq = lit_seq;
+			lit_seq = 0;
+		}
+	}
+	fprintf(stderr, "------== GRAPH  STATS ==------\n#RLE CNT: 		%u\n#RLEed BYTES:		%u\n#LIT:			%u\nMAX LIT SEQ:		%u\n------------------------------\n",
+		rle_cnt, rle_bytes,lit_cnt,max_lit_seq);
+}
+
+
+
 uint32_t pucrunch_256_encode (uint8_t *outbuf,uint16_t *out_len,
-                             const uint8_t *inbuf, uint16_t in_len,
+                             uint8_t *inbuf, uint16_t in_len, // const !!! inbuf
 			     uint8_t fast_lane) {
 
 start_clock();
@@ -1033,47 +1144,47 @@ start_clock();
 	uint8_t rle_rank[15];
 	uint8_t rank_len;
 
-	// reset_graph_path (graph, in_len);
 	count_rle_and_generate_occ_from_inbuf (graph, inbuf, in_len, rle_occ);
 	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-
 fprintf (stderr, "--- COUNTING RLE: ");
 print_clock(); start_clock();
-
-	uint16_t last_occ[256][256];
-	find_matches (graph, inbuf, in_len, last_occ); // !!! option for different weighting
-
-fprintf (stderr, "--- FINDING MATCHES: ");
+	prepare_last_seen_from_graph (graph, inbuf, in_len);
+fprintf (stderr, "--- PREPARE OCCURENCES: ");
 print_clock(); start_clock();
 
+uint8_t lz_length_max_gamma = 7;
+
+	find_matches (graph, inbuf, in_len, 0, in_len-1, 2, fast_lane, lz_length_max_gamma);
+// fprintf (stderr, "--- FINDING MATCHES TOTAL: ");
+// print_clock(); start_clock();
 	uint8_t lz_lsb = int_log2 (in_len)*2/3;
 	uint8_t lz2_bits = int_log2 (in_len)*2/3;
 		lz2_bits = lz2_bits>8?8:lz2_bits;
-//	uint8_t lz2_bits = 8;
 
 	uint32_t min_no_bits = 0xFFFFFFFF;
 	uint8_t min_no_esc;
 	uint8_t min_lz_lsb;
 	uint8_t min_lz2_bits;
-	int min_start_esc;
+	uint8_t min_start_esc;
 
 	// do the graph building with (standard) mtf turned on
 	uint8_t mtf = 1;
+if (fast_lane > 1) mtf = 0;
+
 
 	uint8_t no_esc;
-	int start_esc = 0;
+	uint8_t start_esc = 0;
 
 	if (fast_lane < 3) {
 		for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?9:4); no_esc++) {
 			// the first path generated using sane default
-			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
+			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits);
-//			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
 			int escaped = optimize_esc (graph, inbuf, in_len, no_esc, &start_esc, mtf, 0);
 
 if (fast_lane < 2)	update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
 if (fast_lane < 2)	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, last_occ, fast_lane);
+if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 
 	            	/* Compare value: bits lost for escaping -- bits lost for prefix */
 			if ((graph[0].bits_to_end + (no_esc+3) * escaped) < min_no_bits) {
@@ -1098,45 +1209,48 @@ print_clock(); start_clock();
 	}
 	// (re-)calculate best path with the values found or set above
 	// alternatively, store the best graph found in the loop so far... (memory!!!)
-	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, last_occ, fast_lane);
+	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
 if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
 if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, last_occ, fast_lane);
+if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
 
 	// handling of remaining LITerals:
 	int escaped;
-	int huffed;
+	uint32_t huffed = 0;
         uint8_t huffman_tree[320];
         uint16_t huffman_tree_len_bits = 0;
         struct huffman_node table[511];
 	uint16_t head_array[256];
+	memset (head_array, 0xFF, 512);
 
 fprintf (stderr, "GENERATING FINAL GRAPH: ");
 print_clock(); start_clock();
 
 	// determine if we would be better off with or without mtf
 	uint8_t min_mtf = 0;
+if (fast_lane < 2) {
 	uint32_t min_mtf_bits = 0xFFFFFFFF;
 	for (mtf = 0; mtf < 2; mtf++) {
 		escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc, mtf, 0);
 		min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped; // "- escaped" is for those counted 9-bit LIT in find_best_path
 	        huffman_tree_len_bits = 0;
-	        huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc);
+if (!fast_lane)	huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc, mtf);
 		if ( (min_no_bits-huffed) < min_mtf_bits ) {
 			min_mtf = mtf;
 			min_mtf_bits = (min_no_bits - huffed);
 		}
 	}
-
+}
 	// if mtf, will a higher mtf_second_line be beneficial?
 	uint8_t min_mtf_second_line = 0;
 	uint32_t min_mtf_second_line_bits = 0xFFFFFFFF;
 	if (min_mtf) {
-		for (uint8_t mtf_second_line=0; mtf_second_line < 254; mtf_second_line++) {
-			escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc,min_mtf , mtf_second_line);
+		for (uint8_t mtf_second_line=0; mtf_second_line < (fast_lane?1:254); mtf_second_line++) {
+			escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc,min_mtf, mtf_second_line);
 			min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped;
 		        huffman_tree_len_bits = 0;
-		        huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc);
+if (!fast_lane)	        huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc, mtf);
+// fprintf (stderr, "MTF CHECK %u BITS: %u\n",mtf_second_line, min_no_bits-huffed);
 			if ( (min_no_bits-huffed) < min_mtf_second_line_bits ) {
 				min_mtf_second_line = mtf_second_line;
 				min_mtf_second_line_bits = (min_no_bits - huffed);
@@ -1147,24 +1261,19 @@ fprintf (stderr, "----- MTF: %u    MTF SECOND LINE: %u\n",min_mtf, min_mtf_secon
 
 fprintf (stderr, "HUFFMAN ON LITERALS: ");
 print_clock(); start_clock();
-
 	escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc, min_mtf, min_mtf_second_line);
         huffman_tree_len_bits = 0;
-        huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc);
-
+if (!fast_lane) huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc,mtf);
 fprintf (stderr, "CALCULATE (AGAIN) USING FINALLY DETERMINED PARAMETERS: ");
 print_clock(); start_clock();
-
-	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lz_lsb, min_lz2_bits, table, head_array, huffman_tree, huffman_tree_len_bits );
-
+	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lz_lsb, min_lz2_bits, lz_length_max_gamma, table, head_array, huffman_tree, huffman_tree_len_bits );
 fprintf(stderr, "-----== ENCODING STATS ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:			%u\nOUT: without header	%u\n     before huffman\n------------------------------\n",
 	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rank_len, in_len, (min_no_bits + 7)>>3);
+print_graph_stats (graph, in_len);
 
-//	*out_len = (min_no_bits + 7) >> 3; // this ignores the header !!! delete !!!
 
 fprintf (stderr, "--- OUTPUT FINAL PATH: ");
 print_clock(); start_clock();
-
 }
 
 // ---=== DECODE DECODE DECODE DECODE DECODE ===---
@@ -1203,7 +1312,7 @@ static int up_GetBits(int bits) {
 static int up_GetValue(void) {
     int i = 0;
 
-    while (1) { // !!! was: (i<maxGamma) {
+    while (1) {
         if (!up_GetBits(1))
             break;
         i++;
@@ -1291,6 +1400,7 @@ start_clock();
 	int32_t len = (up_GetValue()-1)<<8;
 	len += up_GetBits(8);
 	// number of ESCape bits and first ESCape sequence
+	uint8_t lz_length_max_gamma = up_GetBits (4);
 	uint8_t no_esc = up_GetBits(4);
 	uint8_t current_esc8 = up_GetBits(no_esc);
 	// RLE table count and table w/ up to 15 entries
@@ -1308,10 +1418,14 @@ start_clock();
 	uint8_t mtf = up_GetBits(1);
 	uint8_t mtf_second_line = mtf?up_GetBits(8):0;
 
+	// do huffman trees follow?
+	uint8_t huffman = up_GetBits(1);
 	// build huffman trees for LITerals
-	uint16_t heads[256]; for (int i = 0; i<256; i++) heads[i]=0xFFFF;
+	uint16_t heads[256];
+	memset (heads, 0xFF, 512);
 	struct huffman_node nodes [511];
-	build_huffman_trees ( no_esc, nodes, heads);
+fprintf (stderr, "HUFFMAN TREES? %u\n",huffman);
+	if (huffman) build_huffman_trees ( no_esc, nodes, heads);
 
 fprintf(stderr, "-----== DECODING STATS ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		%6u\n#LZ2 OFFSET BITS	%6u\n#RANKED RLEs		%6u\nIN incl. header:	%6u\nOUT:			%6u\n------------------------------\n",
 	no_esc, lz_lsb, lz2_bits, rank_len, in_len, len);
@@ -1319,10 +1433,14 @@ fprintf(stderr, "-----== DECODING STATS ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 	uint8_t current_esc = current_esc8 << (8 - no_esc);
 	uint8_t esc_mask = 0xFF00 >> no_esc;
 uint16_t rle_ranked_cnt = 0;
+
+uint16_t c=0;
+uint16_t old_lz_length[4] = { 0,0,0,0 };
+
 	for (uint16_t cnt=0;cnt<len;) {
 		uint8_t first_fetch = up_GetBits(no_esc);
 		if (first_fetch == current_esc8) {
-			uint16_t fetch = up_GetValue();
+			uint16_t fetch = up_GetValueMaxGamma(lz_length_max_gamma);
 			if (fetch == 1) { // '1' in modified E. Gamma means the first bit is '0'
 				// investigate the following bit(s)
 				if ( up_GetBits(1) ) {
@@ -1365,6 +1483,24 @@ rle_ranked_cnt++;
 				}
 			} else {
 				// common LZ, the fetch already contains the LZ count
+// n := length of 'LZ length' history
+// disabled for now, no compression gain
+// needs to be identical to 'n' in encode
+uint16_t n=0;
+if (fetch<(n+2)) {
+	c++;
+	uint16_t k=fetch-2;
+	fetch = old_lz_length[k];
+	for (;k>0; k--)
+		old_lz_length[k] = old_lz_length[k-1];
+	old_lz_length[0] = fetch;
+} else {
+	old_lz_length[3] = old_lz_length[2];
+	old_lz_length[2] = old_lz_length[1];
+	old_lz_length[1] = old_lz_length[0];
+	fetch = fetch-n;
+	old_lz_length[0] = fetch;
+}
 				fetch++;
 				// E. Gamma coded offset MSBs (-1)
 				uint16_t offset = up_GetValue()-1;
