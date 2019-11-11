@@ -48,7 +48,7 @@ One possible string matching speed-up that takes advantage of RLE is still lacki
 
 So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1155) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
-Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset?
+Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that compression of repetitions of similar sequences, such as `12345678` and `1234X678` will benefit.
 
 An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.
 
