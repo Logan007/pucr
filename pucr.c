@@ -12,6 +12,8 @@ static double cpu_time_used;
 
 #define NO_MAX_GAMMA 0xFF
 
+#define MAX_RLE_RANKS 31
+
 #define LZ	0x0000
 #define LIT	0x0002
 #define RLE	0x0003
@@ -129,6 +131,7 @@ static uint8_t int_log2 (uint16_t x) { // uint16_t x
 
 // ---=== MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT ===---
 
+
 static uint8_t move_to_front_encode (uint8_t in_char,
                                      uint8_t alphabet[],
 				     uint8_t second_line) {
@@ -158,232 +161,123 @@ static uint8_t move_to_front_decode (uint8_t in_char,
 }
 
 
-// ---=== HUFFMAN HUFFMAN HUFFMAN HUFFMAN HUFFMAN HUFFMAN HUFFMAN HUFFMAN  ===---
-
-struct huffman_code_t {
-    uint8_t code[32];
-    uint8_t code_len;
-};
-
-struct huffman_node {
-    int16_t count, l, r;
-    bool used;
-    struct huffman_code_t code;
-};
+// ---=== LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT LIT ===---
 
 
-uint32_t huffman_tree_encode (struct huffman_node table[], uint16_t current_node,
-                              struct huffman_code_t current_code,
-                              uint8_t *encoded_tree, uint16_t *tree_position,
-                              uint8_t no_symbol_bits) {
+static uint32_t update_lit_occ_from_graph (struct pucr_node graph[], uint16_t in_len,
+		   uint16_t lit_occ[]) {
 
-    if (table[current_node].l == -1) {
+	uint16_t i;
+	for (i=0; i<256; i++) lit_occ[i] = 0;
 
-        // ouput '1' as code for a following leaf
-        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] | (0x80 >> (*tree_position & 0x07));
-        *tree_position = *tree_position + 1;
-        uint8_t cn = current_node;
-        // write 'no_symbol_bits'-bit uncompressed value
-        for (int8_t i=no_symbol_bits-1; i >= 0; i--) {
-            if ((cn >> i) & 0x01) {
-	        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] | (0x80 >> (*tree_position & 0x07));
-	    } else {
-//	        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
-	    }
-            *tree_position = *tree_position + 1;
-        }
+	for (i=0; i < in_len; i=graph[i].next_node)
+		if (graph[i].way_to_go == LIT)
+			lit_occ[graph[i].cur_lit]++;
 
-        // complete missing shifts and write code to leaf
-        for (uint16_t i=current_code.code_len; (i & 0x07) != 0; i++)
-            current_code.code[i >> 3] = current_code.code[i >> 3] << 1;
-        for (uint8_t i=0; i < 32; i++)
-            table[current_node].code.code[i] = current_code.code[i];
-        table[current_node].code.code_len = current_code.code_len;
-    } else {
-        // output'0' to indicate following l and r which are the recursively determined respective sub-trees (0lr)
-//        encoded_tree[*tree_position >> 3] = encoded_tree[*tree_position >> 3] & (0xFF00 >> (*tree_position & 0x07));
-        *tree_position = *tree_position + 1;
-
-        // construct codeword (l=0)
-        current_code.code[current_code.code_len >> 3] = current_code.code[current_code.code_len >> 3] << 1;
-        current_code.code_len++;
-        // recursively parse left sub-tree
-        huffman_tree_encode (table, table[current_node].l, current_code, encoded_tree, tree_position, no_symbol_bits);
-
-        // construct codeword (r=1)
-        current_code.code_len--;
-        current_code.code[current_code.code_len >> 3] = current_code.code[current_code.code_len >> 3] | 0x01;
-        current_code.code_len++;
-        // recursively parse right sub-tree
-        huffman_tree_encode (table, table[current_node].r, current_code, encoded_tree, tree_position, no_symbol_bits);
-    }
+	return (0);
 }
 
 
-uint32_t generate_one_huffman_tree_and_part_of_codebook (uint8_t huffman_tree[], uint16_t *huffman_tree_len_bits,
-                                                         struct huffman_node table[], uint16_t *first_head,
-                                                         uint8_t no_symbol_bits, uint8_t preceding_bits) {
+static uint32_t lit_huffy (uint16_t lit_occ[], uint8_t lit_rank[], uint8_t *lit_rank_len, uint8_t no_esc) {
 
+	// how 'huffy' are literals? does it make sense to encode them with an implicit huffman tree?
 
-// !!! max size of encoded huffman tree: 320 byte ; do we need to check for it?
-// !!! max size of huffman_node table: 256 leafs + max 255 nodes = 511 entries
-// !!! head on first call = 255
+	uint16_t max_index, max_value;
+	int16_t i;
 
-        /* the huffman table comes prefilled with bytes' occurences in table[i].count */
-        /* mark those entries without hits as 'already used' so they do not get checked later */
-        // also: those that do not match the leading mask
-        uint8_t preceding_bits8 = preceding_bits << no_symbol_bits;
-        uint8_t mask = 0xFF00 >> (8 - no_symbol_bits);
-uint16_t cnt = 0;
-        for (uint16_t i=0; i < 256; i++) {
-            if ( (table[i].count == 0) | ((i & mask) != preceding_bits8) )
-                table[i].used = true;
-            else
-{                table[i].used = false;
-cnt++;
-}
-            table[i].l = -1;
-            table[i].r = -1;
-        }
-        for (uint16_t i=256; i<511; i++) table[i].used=false;
-
-        uint16_t head = *first_head;
-        do {
-            head++;
-
-            // LEFT SIDE
-            uint32_t min = 0xFFFFFFFF;
-            int16_t min_idx = -1;
-	    // skip nodes from formerly created trees
-            for (uint16_t i=0; i < head; i=(i==255)?*first_head+1:i+1) {
-                if (!table[i].used) {
-                    if (table[i].count < min) {
-                        min = table[i].count;
-                        min_idx = i;
-                    }
-                }
-            }
-
-            table[head].l = min_idx;
-
-	    // not even a single node (empty tree)
-	    if (!(min+1))
-		break;
-
-            table[head].count = table[min_idx].count;
-            table[min_idx].used = true;
-
-	    // RIGHT SIDE
-            min = 0xFFFFFFFF;
-            min_idx = -1;
-            // skip nodes from formerly created trees
-            for (uint16_t i=0; i < head; i=(i==255)?*first_head+1:i+1) {
-                if (!table[i].used) {
-                    if (table[i].count < min) {
-                        min = table[i].count;
-                        min_idx = i;
-                    }
-                }
-            }
-            if (min+1) {
-                table[head].r = min_idx;
-                table[head].count += table[min_idx].count;
-                table[min_idx].used = true;
-            } else {
-                head=table[head].l;
-                break;
-            }
-        } while (true);
-
-        *first_head = head<256?*first_head:head;
-
-        /* output tree and generate codebook */
-        struct huffman_code_t empty_code = {};
-	empty_code.code_len = 0;
-//	empty_code.code [0] = 0;
-
-        huffman_tree_encode (table, head, empty_code, huffman_tree, huffman_tree_len_bits, no_symbol_bits);
-}
-
-
-uint32_t generate_huffman_trees_and_codebook (struct pucr_node graph[], uint8_t const *inbuf, uint16_t in_len,
-                                              uint8_t huffman_tree[], uint16_t *huffman_tree_len_bits,
-                                              struct huffman_node table[], uint16_t head_array[],
-                                              uint8_t no_symbol_bits,
-					      uint8_t first_tree_only) {
-
-	uint32_t ret = 0;
-        uint8_t esc_mask = 0xFF00 >> (8-no_symbol_bits);
-        uint8_t mask = 0x00FF >> (8-no_symbol_bits);
-
-        for (uint16_t i=0; i < 256; i++) table[i].count = 0;
-        // count LITeral occurences
-        for (uint16_t i=0; i < in_len; i=graph[i].next_node) {
-                 if (graph[i].way_to_go == LIT) {
-			table[graph[i].cur_lit].count++;
+	for (i=0;i<256;i++) {
+		/* find characters with highest number of occurences
+		 * but not below 2 for ranks 3 and following */
+		max_value = 0; // (i < 3)?1:2; !!! not for complete ranking
+		max_index = 0xFFFF;
+		for (uint16_t j=0; j < 256 ; j++) {
+			if (lit_occ[j] > max_value) {
+				/* check that candidate J is not already in list */
+				uint16_t k;
+				for (k=0;k<i;k++) if ( j==lit_rank[k] ) break;
+				if (k == i) {
+					max_value = lit_occ[j];
+					max_index = j;
+				}
+			}
+		}
+		if ( max_index != 0xFFFF ) {
+			lit_rank[i] = max_index;
+			*lit_rank_len = *lit_rank_len + 1;
+		} else {
+			break;
 		}
 	}
 
-	uint16_t head = 255;
+uint32_t min = 0xFFFFFFFF;
+uint16_t idx = 0xFFFF;
+//for (uint16_t ranked=0;ranked<i;ranked++) {
+uint32_t sum = 0;
+for (uint16_t g=0;g<64&&g<i;g++) sum += lit_occ[lit_rank[g]] * 7;
+for (uint16_t g=64;g<128&&g<i;g++) sum += lit_occ[lit_rank[g]] * 8;
+for (uint16_t g=128;g<i;g++) sum += lit_occ[lit_rank[g]] * 9;
+//fprintf(stderr,"SUM %u x LIT: %u\n",i,sum);
+/*if (sum < min) {
+min=sum;
+idx=ranked;
+}*/
+//}
+	*lit_rank_len = idx;
 
- // !!! do we really need this? not, if excplicitly setting '0' bits to zero
-	memset (huffman_tree, 0x00, 320);
-
-        for (uint16_t i=0; i<(uint8_t)(1<<(8-no_symbol_bits)); i++) {
-                uint16_t old_tree_len_bits = *huffman_tree_len_bits;
-                // leave placeholder space for a 1-bit indicator
-		*huffman_tree_len_bits = *huffman_tree_len_bits + 1;
-		// go only to work if neccessary
-		if ( (!first_tree_only) || (i == 0) ) {
-			generate_one_huffman_tree_and_part_of_codebook (huffman_tree, huffman_tree_len_bits,
-		                                                         table, &head,
-                		                                         no_symbol_bits, i);
-		}
-
-                int32_t sum = 0;
-if ( (!first_tree_only) || (i == 0) ) {
-                for (uint16_t j=(i << no_symbol_bits); j < ((i+1) << no_symbol_bits); j++)
-                         sum += table[j].count * (no_symbol_bits - table[j].code.code_len);
+//	*lit_rank_len = i;
+	return (0);
 }
 
-// fprintf (stderr, "--- HUFFMAN WITH %u BIT SYMBOLS WOULD SAVE %d BITS\n",no_symbol_bits, sum-(*huffman_tree_len_bits-old_tree_len_bits));
+// not used yet
+static uint32_t estimate_lit_and_generate_occ_from_inbuf (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
+			   uint16_t rle_occ[]) {
 
-		// if positive savings... (even the 1-bit indicator needs to pay off)
-		if ( (*huffman_tree_len_bits-old_tree_len_bits) < (sum+1) ) {
-			// set indicator to '1'
-			huffman_tree [old_tree_len_bits >> 3] = huffman_tree [old_tree_len_bits >> 3] | (0x80 >> (old_tree_len_bits & 0x07));
-			// store the head for easier access to the table while encoding
-			head_array[i] = head;
-			ret += sum-(*huffman_tree_len_bits-old_tree_len_bits);
+	uint8_t character = inbuf [in_len-1];
+	uint16_t rle_count = 0;
+	int32_t i; // required (as file size is 16 bit and i may fall below 0); also needed outside loop -- really !!! ???
+
+	for (i=255; i>=0; i--) rle_occ[i] = 0;
+
+	for (i=in_len-1; i >= 0; i--) {
+
+		if (inbuf[i] == character) {
+			rle_count++;
 		} else {
-			// set indicator to '0' (do not care about the following bits)
-			huffman_tree [old_tree_len_bits >> 3] = huffman_tree [old_tree_len_bits >> 3] & (0xFF7F >> (old_tree_len_bits & 0x07));
-			// do not use the tree for this part (but leave the '0' bit indicator)
- 			*huffman_tree_len_bits = old_tree_len_bits +1;
-			// indicate 'no tree' to easen LITerals' encoding
-			head_array[i] = 0xFFFF;
+
+			// !!! the following line are for creating occurances table, for optimizing later
+			/* count number of occuring (real) RLE runs (>1) per character */
+			if (rle_count > 1) rle_occ[inbuf[i+1]]++;
+//				fprintf (stderr,"!!! RLE %c at %u !!!\n", inbuf[i+1],i);
+			rle_count = 1;
+			character = inbuf[i];
 		}
-        }
-	return (ret);
+		graph[i].rle_count = rle_count;
+
+// fprintf (stderr, "Pos. %5u  LZ %5u  %c\n",i,rle_count,character); // !!!
+	}
+	// first position
+	if (rle_count > 1) rle_occ[inbuf[i+1]]++;
+
+// fprintf (stderr, "!!! RLE %c at %u !!!\n", inbuf[i+1],i+1); }
 }
 
 
 // ---=== RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE RLE ===---
 
-static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint8_t *rank_len) {
+static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint8_t *rle_rank_len) {
 
 	uint16_t max_index, max_value;
-	int8_t i;
+	int16_t i;
 
-	for (i=0;i<15;i++) {
+	for (i=0;i<MAX_RLE_RANKS;i++) {
 		/* find characters with highest number of occurences
 		 * but not below 2 for ranks 3 and following */
-		max_value = (i < 3)?1:2;
+		max_value =  (i < 3)?1:(i < 16)?2:4;
 		max_index = 0xFFFF;
-		for (int j=0; j < 256; j++) {
+		for (uint16_t j=0; j < 256 ; j++) {
 			if (rle_occ[j] > max_value) {
 				/* check that candidate J is not already in list */
-				int k;
+				uint16_t k;
 				for (k=0;k<i;k++) if ( j==rle_rank[k] ) break;
 				if (k == i) {
 					max_value = rle_occ[j];
@@ -393,13 +287,31 @@ static uint32_t generate_rle_ranks (uint16_t rle_occ[], uint8_t rle_rank[], uint
 		}
 		if ( max_index != 0xFFFF ) {
 			rle_rank[i] = max_index;
-			*rank_len = *rank_len + 1;
+			*rle_rank_len = *rle_rank_len + 1;
 // fprintf (stderr, "Rnk. %2u Occ. %5ux [%3u]\n",i, rle_occ[max_index], max_index ); // !!!
 		} else {
 			break;
 		}
 	}
-	*rank_len = i;
+
+
+// find optimal length for ranked RLE table
+uint32_t min = 0; // 0xFFFFFFFF;
+for (uint16_t g=0;g<i;g++) min += rle_occ[rle_rank[g]] * 8;
+uint16_t idx = 0xFFFF;
+for (uint16_t ranked=0;ranked<i;ranked++) {
+uint32_t sum = 0;
+for (uint16_t g=0;g<ranked;g++) sum += 8 + rle_occ[rle_rank[g]] * (int_log2(g+1)*2+1);
+for (uint16_t g=ranked;g<i;g++) sum += rle_occ[rle_rank[g]] * ((ranked==0?0:int_log2(ranked)+1) +8);
+// fprintf(stderr,"SUM RLE%u: %u\n",ranked,sum);
+if (sum < min) {
+min=sum;
+idx=ranked;
+}
+}
+ *rle_rank_len = idx+1;
+
+//	*rle_rank_len = i;
 	return (0);
 }
 
@@ -464,6 +376,8 @@ static uint32_t find_closer_match (struct pucr_node graph[], const uint8_t *inbu
 	// even more if rle is longer in that position !!!
 	uint16_t off = (graph[pattern_start].rle_count -1);
 	off = off<=2?2:off;
+//off=0;
+//	graph[pattern_start].lz_cur_offset = graph[pattern_start].lz_max_offset; // 0xFFFF;
         for (j=graph[pattern_start].seen_before; (j >= min_match_start) && (j != 0xFFFF); j=graph[j].seen_before) { // check at offset J for a match ...
         	if (graph[pattern_start].rle_count != graph[j].rle_count) continue;
                	k = j + off;
@@ -506,8 +420,6 @@ static uint32_t find_matches (struct pucr_node graph[], const uint8_t *inbuf, ui
 		find_matches (graph, inbuf, in_len, first_pos, first_pos+sep, recursive-1, fast_lane, lz_length_max_gamma);
 		find_matches (graph, inbuf, in_len, first_pos+sep+1, last_pos, recursive-1, fast_lane, lz_length_max_gamma);
 	} else {
-		// preparing for pthreads:
-		// the following code could lateron be outsourced to distinct threads
 		uint16_t i,j,k, off;
 		for (i=first_pos; i <= last_pos;i+=fast_lane?graph[i].rle_count:1) {
 			graph[i].lz_max_offset = 0xFFFF; // !!! neccessary for msb-lsb-offset calculation of number of bits
@@ -715,7 +627,7 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
 
 
 static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
-				uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
+				uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rle_rank_len,
 				uint8_t no_esc,
 				uint8_t lz_lsb, uint8_t lz2_bits,
 				uint8_t fast_lane) {
@@ -726,14 +638,14 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 	for (uint16_t j=0; j < 256; j++) {
 		/* is it a ranked character? */
 		uint8_t k;
-		for (k=0; k < rank_len; k++) if ( j == rle_rank[k] ) break;
-		if (k != rank_len) {
+		for (k=0; k < rle_rank_len; k++) if ( j == rle_rank[k] ) break;
+		if (k != rle_rank_len) {
 			// ranked
 			rle_cost_table[j] = 3 + int_log2(k+1)*2+1; // + (32 / (3 * rle_occ[j] + 1)); // this is a try to take table costs into account !!!
 		} else {
 			// not ranked
-			rle_cost_table[j] = 3 + int_log2(rank_len)+1 + 8;
-			if (rank_len == 0) rle_cost_table[j]--;
+			rle_cost_table[j] = 3 + int_log2(rle_rank_len)+1 + 8;
+			if (rle_rank_len == 0) rle_cost_table[j]--;
 		}
 	}
 	/* however, it is some blur left here: depending on choices in the following optimizer loop, rle occurences and their
@@ -808,11 +720,11 @@ static uint32_t find_best_path (struct pucr_node graph[], const uint8_t *inbuf, 
 		    counted in the optimzize_escape step */
 		lit_cost = 8+graph[i+1].bits_to_end ; // + 1 ??? !!! ;
 
-		if ( (rle_cost <= lz_cost) && (rle_cost < lit_cost) ) {
+		if ( (rle_cost < lz_cost) && (rle_cost < lit_cost) ) {
 			graph[i].way_to_go = RLE;
 			graph[i].next_node = rle_way;
 			graph[i].bits_to_end = rle_cost;
-		} else if ( (lz_cost < rle_cost) && (lz_cost < lit_cost) ) {
+		} else if ( (lz_cost <= rle_cost) && (lz_cost < lit_cost) ) {
 			graph[i].way_to_go = LZ;
 			graph[i].next_node = lz_way;
 			graph[i].bits_to_end = lz_cost;
@@ -877,12 +789,28 @@ static void put_n_bits (int byte, int bits) {
 }
 
 
+static void put_huffed_value (int value, int bits) {
+
+	uint16_t mask = 1<<(bits-1);
+	mask |= mask >> 1;
+
+	if ((value & mask) == 0)
+		put_n_bits (value, bits-1);
+	else if ((value & mask) == (1<<bits-2)) {
+		put_bit (1);
+		put_n_bits (value, bits-1);
+	} else {
+		put_bit (1);
+		put_bit (0);
+		put_n_bits (value, bits-1);
+	}
+}
+
 static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 			uint16_t *out_len,
-			uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rank_len,
+			uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rle_rank_len,
 			uint8_t start_esc, uint8_t no_esc, uint8_t mtf, uint8_t mtf_second_line,
-			uint8_t lz_lsb, uint8_t lz2_bits, uint8_t lz_length_max_gamma,
-			struct huffman_node table[], uint16_t head_array[], uint8_t huffman_tree[], uint16_t huffman_tree_len_bits) {
+			uint8_t lz_lsb, uint8_t lz2_bits, uint8_t lz_length_max_gamma) {
 
 	uint8_t graph_current_esc = start_esc;
 	uint8_t current_esc = start_esc;
@@ -899,8 +827,8 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	put_n_bits (no_esc,4);
 	put_n_bits (current_esc_8,no_esc);
 	// RLE table count and table w/ up to 15 entries
-	put_n_bits (rank_len,4);
-	for (uint8_t i=0; i < rank_len; i++)
+	put_value (rle_rank_len+1, 6);
+	for (uint8_t i=0; i < rle_rank_len; i++)
 		put_n_bits(rle_rank[i],8);
 	// number of bits for LZ2 offset
 	put_n_bits (lz2_bits,4);
@@ -909,25 +837,12 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	// move to front
 	if (mtf) put_bit (1); else put_bit (0);
 	if (mtf) put_n_bits (mtf_second_line,8);
-	// huffman tree(s)
-	if ( huffman_tree_len_bits != (uint8_t)(0x001 << no_esc) && (huffman_tree_len_bits != 0) )
-	{
-fprintf(stderr, "HUFFMAN: %u BITS FOR TREE\n", huffman_tree_len_bits);
-		put_bit(1);
-		uint16_t i;
-		for (i=0; i < huffman_tree_len_bits; i=i+8) {
-			uint8_t no_bits = (uint16_t)(huffman_tree_len_bits-i)>=8?8:(huffman_tree_len_bits-i);
-			put_n_bits (huffman_tree[i >> 3]>>(8-no_bits), no_bits );
-		}
-	} else {
-fprintf(stderr, "HUFFMAN: NO TREE\n");
-		put_bit(0);
-	}
+
 	// derive further parameters
-	uint8_t no_rle_char_esc_bits = (rank_len==0)?0 : int_log2(rank_len)+1;
+	uint8_t no_rle_char_esc_bits = (rle_rank_len==0)?0 : int_log2(rle_rank_len)+1;
 // fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 
-int16_t old_lz_length[4] = {0,0,0,0};
+int16_t old_lz_offset[4] = {0,0,0,0};
 uint16_t esc_seq_count = 0;
 uint16_t lz_len[256] = {0};
 uint16_t rle_len[256] = {0};
@@ -942,6 +857,8 @@ fprintf(stderr,"");
 uint16_t rle = graph[i].next_node -i;
 rle = rle>63?63:rle;
 rle_len[rle]++;
+
+
 				// ESC ++ 011
 				put_n_bits (current_esc_8, no_esc);
 				put_bit (0); put_bit (1); put_bit (1);
@@ -949,8 +866,8 @@ rle_len[rle]++;
                                 put_value (graph[i].next_node - i - 1, NO_MAX_GAMMA);
 				// check if it is a ranked character
 				uint8_t k;
-				for (k=0; k < rank_len; k++) if ( inbuf[i] == rle_rank[k] ) break;
-				if (k != rank_len) {
+				for (k=0; k < rle_rank_len; k++) if ( inbuf[i] == rle_rank[k] ) break;
+				if (k != rle_rank_len) {
 					// is ranked: E. Gamma coded pointer to rank list
 					put_value (k+1, NO_MAX_GAMMA);
 if (rle==2) rle2_ranked++;
@@ -971,37 +888,45 @@ esc_seq_count++;
 										graph[i].next_node,
 										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end);
 */				put_n_bits (current_esc_8, no_esc);
+
 uint16_t lz= graph[i].next_node -i;
 lz = lz>63?63:lz;
 lz_len[lz]++;
+
+
+
+
+
 				if ( (graph[i].next_node-i) == 2 ) {
 					// LZ2: ESC + 000 + LZ2 OFFSET (lz2_bits)
 	                                put_bit (0); put_bit (0); // put_bit (0);
+if (lz2_bits <= 2)
 					put_n_bits (graph[i].lz_cur_offset-2, lz2_bits);
+else
+put_huffed_value (graph[i].lz_cur_offset-2, lz2_bits);
 //					fprintf (stderr, " {%u} ", no_esc + 2 + lz2_bits);
 				} else {
-// n := length of 'LZ length' history
-// disabled for now, no compression gain
-// needs to be identical to 'n' in output
 uint16_t n=0;
 uint16_t j=0;
 for (;j<n;j++)
-if ((graph[i].next_node-i-1) == old_lz_length[j]) {
+if ((graph[i].next_node-i-1) == old_lz_offset[j]) {
 	break;
 }
 
 if (j==n) {
-	old_lz_length[3] = old_lz_length[2];
-	old_lz_length[2] = old_lz_length[1];
-	old_lz_length[1] = old_lz_length[0];
-	old_lz_length[0] = graph[i].next_node-i-1;
+	old_lz_offset[3] = old_lz_offset[2];
+	old_lz_offset[2] = old_lz_offset[1];
+	old_lz_offset[1] = old_lz_offset[0];
+	old_lz_offset[0] = graph[i].next_node-i-1;
 	j = graph[i].next_node-i-1+n;
 } else {
 	for (uint16_t k=j;k>0; k--)
-		old_lz_length[k] = old_lz_length[k-1];
-	old_lz_length[0] = graph[i].next_node-i-1;
+		old_lz_offset[k] = old_lz_offset[k-1];
+	old_lz_offset[0] = graph[i].next_node-i-1;
 	j = j+2;
 }
+
+
 					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_max_len ...
 //					put_value (graph[i].next_node - i - 1 , lz_length_max_gamma);
 //j = graph[i].next_node-i-1;
@@ -1037,11 +962,17 @@ if (esc_seq_count > 10) fprintf (stderr, "ESC SEQ: %u\n", esc_seq_count);
 esc_seq_count=0;
 
 					// output the mtf-encoded literal
-// w/o HUFFMAN:				put_n_bits (graph[i].cur_lit, 8);
-					put_n_bits (graph[i].cur_lit >> (8-no_esc), no_esc);
-					// select huffman tree if available
+// normal:					put_n_bits (graph[i].cur_lit, 8);
+
+
+if ( mtf == 0 || no_esc > 6) {
+put_n_bits (graph[i].cur_lit, 8);
+} else {
+put_n_bits (graph[i].cur_lit >> (8-no_esc), no_esc);
+put_huffed_value(graph[i].cur_lit, (8-no_esc));
+}					// select huffman tree if available
 					// eventually, use codebook for output
-					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF)
+/*					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF)
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
 					else {
 						for (uint8_t j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
@@ -1052,6 +983,7 @@ esc_seq_count=0;
 						}
 
 					}
+*/
 // fprintf (stderr, " {%u} ",8);
 				} else {
 esc_seq_count++;
@@ -1069,7 +1001,13 @@ esc_seq_count++;
 					// select huffman tree if available
 					// eventually, use codebook for output
 
-					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF){
+// normal:					put_n_bits (graph[i].cur_lit, 8-no_esc);
+if ( mtf == 0 || no_esc > 6)
+put_n_bits (graph[i].cur_lit, 8-no_esc);
+else {
+put_huffed_value(graph[i].cur_lit, (8-no_esc));
+}
+/*					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF){
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
 					} else {
 	                                        for (uint8_t j=0; j < table[graph[i].cur_lit].code.code_len; j++) {
@@ -1077,6 +1015,7 @@ esc_seq_count++;
 	                                                        put_bit(1); else put_bit(0);
 	                                        }
 					}
+*/
 // fprintf (stderr, " {%u} ",8+3+no_esc);
 				}
 				break;
@@ -1093,13 +1032,12 @@ esc_seq_count++;
 	*out_len = (bitCount+7) >> 3;
 // fprintf (stderr, "TOTAL SIZE: %u BITS ~~ %u BYTES\n", bitCount, (bitCount+7) >> 3);
 //	printf ("OUT POINTER: %u\n", outPointer);
-// for(uint16_t h=0; h< 64;h++) fprintf(stderr, "LZ%3u: %5u x    RLE%3u: %5u\n",h,lz_len[h],h,rle_len[h]);
+//for(uint16_t h=0; h< 64;h++) fprintf(stderr, "LZ%3u: %5u x    RLE%3u: %5u\n",h,lz_len[h],h,rle_len[h]);
 fprintf (stderr, "missed RLE2 opportunities: %u\n", missed_rle2);
 fprintf (stderr, "ranked RLE2s: %u\n", rle2_ranked);
 
 
 }
-
 
 
 void print_graph_stats (const struct pucr_node graph[], uint16_t in_len) {
@@ -1141,11 +1079,15 @@ start_clock();
 
 	struct pucr_node graph[65536];
 	uint16_t rle_occ[256];
-	uint8_t rle_rank[15];
-	uint8_t rank_len;
+	uint8_t rle_rank[MAX_RLE_RANKS];
+	uint8_t rle_rank_len;
+
+	uint16_t lit_occ[256];
+	uint8_t lit_rank[256];
+	uint8_t lit_rank_len;
 
 	count_rle_and_generate_occ_from_inbuf (graph, inbuf, in_len, rle_occ);
-	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
+	generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
 fprintf (stderr, "--- COUNTING RLE: ");
 print_clock(); start_clock();
 	prepare_last_seen_from_graph (graph, inbuf, in_len);
@@ -1178,13 +1120,13 @@ if (fast_lane > 1) mtf = 0;
 	if (fast_lane < 3) {
 		for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?9:4); no_esc++) {
 			// the first path generated using sane default
-			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits);
 			int escaped = optimize_esc (graph, inbuf, in_len, no_esc, &start_esc, mtf, 0);
 
 if (fast_lane < 2)	update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
-if (fast_lane < 2)	generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+if (fast_lane < 2)	generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
+if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
 
 	            	/* Compare value: bits lost for escaping -- bits lost for prefix */
 			if ((graph[0].bits_to_end + (no_esc+3) * escaped) < min_no_bits) {
@@ -1209,19 +1151,17 @@ print_clock(); start_clock();
 	}
 	// (re-)calculate best path with the values found or set above
 	// alternatively, store the best graph found in the loop so far... (memory!!!)
-	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
 if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
-if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rank_len);
-if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
+if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
+// if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
+// if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
+
 
 	// handling of remaining LITerals:
 	int escaped;
 	uint32_t huffed = 0;
-        uint8_t huffman_tree[320];
-        uint16_t huffman_tree_len_bits = 0;
-        struct huffman_node table[511];
-	uint16_t head_array[256];
-	memset (head_array, 0xFF, 512);
 
 fprintf (stderr, "GENERATING FINAL GRAPH: ");
 print_clock(); start_clock();
@@ -1233,8 +1173,11 @@ if (fast_lane < 2) {
 	for (mtf = 0; mtf < 2; mtf++) {
 		escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc, mtf, 0);
 		min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped; // "- escaped" is for those counted 9-bit LIT in find_best_path
-	        huffman_tree_len_bits = 0;
-if (!fast_lane)	huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc, mtf);
+
+huffed = 0;
+// if (!fast_lane)		update_lit_occ_from_graph (graph, in_len, lit_occ);
+// if (!fast_lane)		lit_huffy (lit_occ, lit_rank, &lit_rank_len, no_esc);
+
 		if ( (min_no_bits-huffed) < min_mtf_bits ) {
 			min_mtf = mtf;
 			min_mtf_bits = (min_no_bits - huffed);
@@ -1248,8 +1191,7 @@ if (!fast_lane)	huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_l
 		for (uint8_t mtf_second_line=0; mtf_second_line < (fast_lane?1:254); mtf_second_line++) {
 			escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc,min_mtf, mtf_second_line);
 			min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped;
-		        huffman_tree_len_bits = 0;
-if (!fast_lane)	        huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc, mtf);
+huffed=0;
 // fprintf (stderr, "MTF CHECK %u BITS: %u\n",mtf_second_line, min_no_bits-huffed);
 			if ( (min_no_bits-huffed) < min_mtf_second_line_bits ) {
 				min_mtf_second_line = mtf_second_line;
@@ -1262,13 +1204,12 @@ fprintf (stderr, "----- MTF: %u    MTF SECOND LINE: %u\n",min_mtf, min_mtf_secon
 fprintf (stderr, "HUFFMAN ON LITERALS: ");
 print_clock(); start_clock();
 	escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc, min_mtf, min_mtf_second_line);
-        huffman_tree_len_bits = 0;
-if (!fast_lane) huffed = generate_huffman_trees_and_codebook (graph, inbuf, in_len, huffman_tree, &huffman_tree_len_bits, table, head_array, 8-min_no_esc,mtf);
+huffed=0;
 fprintf (stderr, "CALCULATE (AGAIN) USING FINALLY DETERMINED PARAMETERS: ");
 print_clock(); start_clock();
-	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lz_lsb, min_lz2_bits, lz_length_max_gamma, table, head_array, huffman_tree, huffman_tree_len_bits );
+	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rle_rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lz_lsb, min_lz2_bits, lz_length_max_gamma );
 fprintf(stderr, "-----== ENCODING STATS ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:			%u\nOUT: without header	%u\n     before huffman\n------------------------------\n",
-	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rank_len, in_len, (min_no_bits + 7)>>3);
+	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rle_rank_len, in_len, (min_no_bits + 7)>>3);
 print_graph_stats (graph, in_len);
 
 
@@ -1333,57 +1274,14 @@ static int up_GetValueMaxGamma(int maxGamma) {
 }
 
 
-uint16_t decode_huffman_tree (struct huffman_node *nodes, uint16_t *next_available_node, uint8_t no_symbol_bits, uint8_t leading_bits ) {
+static int up_get_huffed_value (int bits) {
 
-    // read bit
-    if ( up_GetBits(1) ) {
-	// a leaf at tree's end? read symbol's bits!
-	uint16_t ret = leading_bits | up_GetBits(no_symbol_bits);
-        nodes[ret].l = -1;
-        nodes[ret].r = -1;
-        // return leaf number
-	return (ret);
-    } else {
-        uint16_t current_node = *next_available_node;
-        *next_available_node = *next_available_node + 1;
-        nodes[current_node].l = decode_huffman_tree (nodes, next_available_node, no_symbol_bits, leading_bits);
-        nodes[current_node].r = decode_huffman_tree (nodes, next_available_node, no_symbol_bits, leading_bits);
-        return (current_node);
-    }
-}
-
-uint32_t build_huffman_trees (uint16_t no_esc, struct huffman_node *nodes, uint16_t heads[256]) {
-
-
-	uint8_t no_trees = 0x01 << no_esc;
-
-	uint8_t no_symbol_bits = 8 - no_esc;
-	uint16_t head = 256;
-	for (uint8_t i=0; i<no_trees; i++) {
-		uint8_t leading_bits = i << no_symbol_bits;
-		if ( up_GetBits(1) ) {
-			// a tree to follow
-			heads[i] = decode_huffman_tree (nodes, &head, no_symbol_bits, leading_bits);
-		} else {
-			// no tree
-			heads[i] = 0xFFFF;
-		}
-	}
-}
-
-uint8_t huffman_256_decode ( struct huffman_node *nodes, uint16_t head) {
-
-   /* decode the symbol */
-        uint16_t n = head;
-        while (nodes[n].l != -1) { /* more efficent maybe: n > 255 ? */
-            if ( up_GetBits(1) )
-                n = nodes[n].r;
-            else
-                n = nodes[n].l;
-	}
-        /* special case: no branches, only one leaf in the tree, just get one bit and do nothing about it */
-        if (n == head) up_GetBits(1);
-	return (n);
+	if (!up_GetBits(1))
+		return (up_GetBits(bits-2));
+	else if (up_GetBits(1))
+		return (up_GetBits(bits-2) | (1<<(bits-2)));
+	else
+		return (up_GetBits(bits-1) | (1<<(bits-1)));
 }
 
 
@@ -1404,8 +1302,8 @@ start_clock();
 	uint8_t no_esc = up_GetBits(4);
 	uint8_t current_esc8 = up_GetBits(no_esc);
 	// RLE table count and table w/ up to 15 entries
-	uint8_t rank_len = up_GetBits(4);
-	uint8_t rle_rank[15];
+	uint8_t rank_len = up_GetValueMaxGamma(6)-1;
+	uint8_t rle_rank[MAX_RLE_RANKS];
 	for (uint8_t i=0; i < rank_len; i++)
 		rle_rank[i] = up_GetBits(8);
 	// number of '1' bits to identify a following character (as opposed to rank pointer)
@@ -1418,14 +1316,6 @@ start_clock();
 	uint8_t mtf = up_GetBits(1);
 	uint8_t mtf_second_line = mtf?up_GetBits(8):0;
 
-	// do huffman trees follow?
-	uint8_t huffman = up_GetBits(1);
-	// build huffman trees for LITerals
-	uint16_t heads[256];
-	memset (heads, 0xFF, 512);
-	struct huffman_node nodes [511];
-fprintf (stderr, "HUFFMAN TREES? %u\n",huffman);
-	if (huffman) build_huffman_trees ( no_esc, nodes, heads);
 
 fprintf(stderr, "-----== DECODING STATS ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		%6u\n#LZ2 OFFSET BITS	%6u\n#RANKED RLEs		%6u\nIN incl. header:	%6u\nOUT:			%6u\n------------------------------\n",
 	no_esc, lz_lsb, lz2_bits, rank_len, in_len, len);
@@ -1435,7 +1325,7 @@ fprintf(stderr, "-----== DECODING STATS ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		
 uint16_t rle_ranked_cnt = 0;
 
 uint16_t c=0;
-uint16_t old_lz_length[4] = { 0,0,0,0 };
+uint16_t old_lz_offset[4] = { 0 };
 
 	for (uint16_t cnt=0;cnt<len;) {
 		uint8_t first_fetch = up_GetBits(no_esc);
@@ -1466,40 +1356,38 @@ rle_ranked_cnt++;
 						current_esc8 = up_GetBits(no_esc);
 						current_esc = current_esc8 << (8 - no_esc);
 						// fetch the rest of the mtf-encoded LITeral
-						if (heads[first_fetch] != 0xFFFF) {
-							first_fetch = (first_fetch<<(8-no_esc)) | huffman_256_decode (nodes, heads[first_fetch]);
-						} else {
-							first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-						}
+// normal						first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
+						first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc):up_GetBits(8-no_esc));
 						outbuf[cnt++] = mtf?move_to_front_decode (first_fetch, alphabet, mtf_second_line):first_fetch;
 //fprintf (stderr, "%u. LIT (%c)  --ESCAPED--\n", cnt-1, first_fetch);
 					}
 				} else {
 					// LZ - to be specific, this is LZ2
-					uint16_t offset = up_GetBits (lz2_bits);
+// normal					uint16_t offset = up_GetBits (lz2_bits);
+					uint16_t offset = (lz2_bits<=2?up_GetBits(lz2_bits):up_get_huffed_value (lz2_bits));
 // fprintf (stderr, "%u. LZ (2,%u)\n", cnt, offset+2);
 					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
 					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
 				}
 			} else {
 				// common LZ, the fetch already contains the LZ count
-// n := length of 'LZ length' history
-// disabled for now, no compression gain
-// needs to be identical to 'n' in encode
+
 uint16_t n=0;
+
 if (fetch<(n+2)) {
 	c++;
+if (c<5)	fprintf (stderr, "%5u. len=%5u [j=%u]\n", c,old_lz_offset[fetch],fetch);
 	uint16_t k=fetch-2;
-	fetch = old_lz_length[k];
+	fetch = old_lz_offset[k];
 	for (;k>0; k--)
-		old_lz_length[k] = old_lz_length[k-1];
-	old_lz_length[0] = fetch;
+		old_lz_offset[k] = old_lz_offset[k-1];
+	old_lz_offset[0] = fetch;
 } else {
-	old_lz_length[3] = old_lz_length[2];
-	old_lz_length[2] = old_lz_length[1];
-	old_lz_length[1] = old_lz_length[0];
+	old_lz_offset[3] = old_lz_offset[2];
+	old_lz_offset[2] = old_lz_offset[1];
+	old_lz_offset[1] = old_lz_offset[0];
 	fetch = fetch-n;
-	old_lz_length[0] = fetch;
+	old_lz_offset[0] = fetch;
 }
 				fetch++;
 				// E. Gamma coded offset MSBs (-1)
@@ -1514,11 +1402,8 @@ if (fetch<(n+2)) {
 			}
 		} else {
 			// unESCaped LITeral, fetch the the rest
-			if (heads[first_fetch] != 0xFFFF) {
-				first_fetch = (first_fetch<<(8-no_esc)) | huffman_256_decode (nodes, heads[first_fetch]);
-			} else {
-				first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-			}
+// normal			first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
+			first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc):up_GetBits(8-no_esc));
 			outbuf[cnt++] = mtf?move_to_front_decode (first_fetch, alphabet, mtf_second_line):first_fetch;
 //fprintf (stderr, "%u. LIT (%c)\n", cnt-1, first_fetch);
 		}
