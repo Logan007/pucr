@@ -32,7 +32,7 @@ The following list of changes might be completed and explained textually more de
 
 - Inspired by the Wikipedi [article](https://en.wikipedia.org/wiki/Move-to-front_transform#Example), Move-to-Front received a _Second Line of Defence_. i.e. the index after which the LITerals are inserted (standard Move-to-Front always uses `0`) is parametrized. This is beneficial for repeating LITerals – those would get sorted below that certain index. That could be the case, if the same LITeral gets re-used at the next LITeral position but especially for non-ranked RLEs.
 
-- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed where beneficial. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets their own Huffman-tree – but only, if it saves bits. First trials show that so far, only the `00...`-symbols seem to save enough to afford the costs of a tree; maybe that is another consequence of the preceding Move-to-Front. The tree bitwisely gets encoded to the header.
+- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets the same flat implicit Huffman-tree – but only, if Move-to-Front was used to drive LITerals to lower values.
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
@@ -42,17 +42,15 @@ The following list of changes might be completed and explained textually more de
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __9245__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __9137__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
-So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1155) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
+So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1097) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
 Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that compression of repetitions of similar sequences, such as `12345678` and `1234X678` will benefit.
 
 An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.
-
-~~Talking about tables and regarding Elias-Gamma coded numbers as binary-tree-position (`0` bit for _branch to the left_, `1` bit for _brach to the right_), a ranking table for LITerals (to be spcific, their _reamainders_ following the possible ESCape bits) might lead to similar compression as the currently implemented Huffman coded LITerals. Drawback: In comparison to the Huffman tree, it probably is not the optimal encoding but on the other hand, we do not need to transmit a list of unranked LITerals (as we would need to in case of a Huffmann tree). A big advantage could be speed, as the ranking and the corresponding Elias-Gamma code implicitly already include the tree. The LITeral's treatment shall be aim of some more thoughts.~~ _This does not seems to work out too well. Maybe we need to try a more flat implicit tree?_
 
 To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` for the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
 
