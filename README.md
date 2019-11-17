@@ -20,7 +20,7 @@ As soon as `pucr` reaches a usable state, I will have it added to my fork of `n2
 
 The following list of changes might be completed and explained textually more detailed at a later point in time:
 
-- An entry to the RLE table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
+- An entry to the RLE character table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
 
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size.
 
@@ -48,7 +48,11 @@ One possible string matching speed-up that takes advantage of RLE is still lacki
 
 So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1155) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
-Another finding while testing the use of LZ length history (encoding those as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, and 4). Shall we try history for LZ offset?
+Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that compression of repetitions of similar sequences, such as `12345678` and `1234X678` will benefit.
+
+An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.
+
+~~Talking about tables and regarding Elias-Gamma coded numbers as binary-tree-position (`0` bit for _branch to the left_, `1` bit for _brach to the right_), a ranking table for LITerals (to be spcific, their _reamainders_ following the possible ESCape bits) might lead to similar compression as the currently implemented Huffman coded LITerals. Drawback: In comparison to the Huffman tree, it probably is not the optimal encoding but on the other hand, we do not need to transmit a list of unranked LITerals (as we would need to in case of a Huffmann tree). A big advantage could be speed, as the ranking and the corresponding Elias-Gamma code implicitly already include the tree. The LITeral's treatment shall be aim of some more thoughts.~~ _This does not seems to work out too well. Maybe we need to try a more flat implicit tree?_
 
 To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` for the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
 
