@@ -4,13 +4,13 @@
 
 Looking out for some suitable compression for the lightweight VPN software [`n2n`](https://github.com/ntop/n2n), I happened to come across Pasi Ojala’s [`pucrunch`](http://a1bert.kapsi.fi/Dev/pucrunch/). Not only that it is extremly assymetric and thus lightweight in terms of decompression, documentation also is highly explainatory giving full particulars in a wonderfully comprehensable way.
 
-Having enjoyed reading that extremly inspring [article](https://github.com/Logan007/Pucr/blob/master/pucrunch/README.md) (converted to markdown, see pucrunch [folder](https://github.com/Logan007/Pucr/tree/master/pucrunch)) more than just several times, I started off to create my own implementation `pucr` which uses some of the original code and also includes some optimizations.
+Having enjoyed reading that extremly inspring [article](https://github.com/Logan007/Pucr/blob/master/pucrunch/README.md) (converted to markdown, see pucrunch [folder](https://github.com/Logan007/Pucr/tree/master/pucrunch), permission of the author obtained) more than just several times, I started off to create my own implementation `pucr` which uses some of the original code and also includes some optimizations.
 
 ## Use Case
 
 `n2n` software provides virtual ethernet adapters that encryptedly tunnel traffic between participants (at the `edges` of the network) even through NATs using hole punching technqiues but also the help of a forwarding `supernode` if necessary. To reduce network traffic and also to performancewise save some encryption cost, optional compression was planned for (using `minilzo`).
 
-Today, most `edge` nodes presumably are desktop-like computers with a heap of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
+Today, most `edge` nodes presumably are desktop-like computers with heaps of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
 However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch` as one of the compression algorithms offering that certain asymmetry.
 
@@ -48,7 +48,7 @@ One possible string matching speed-up that takes advantage of RLE is still lacki
 
 So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1097) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
-Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that compression of repetitions of similar sequences, such as `12345678` and `1234X678` will benefit.
+Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that repetitions of similar sequences, such as `1234Y678` and `1234X678` compress better.
 
 An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.
 
