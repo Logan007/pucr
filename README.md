@@ -22,7 +22,7 @@ The following list of changes might be completed and explained textually more de
 
 - An entry to the RLE character table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
 
-- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size.
+- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat implicit Huffman-tree (see below) is applied if supporting compression.
 
 - General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
 
@@ -32,7 +32,7 @@ The following list of changes might be completed and explained textually more de
 
 - Inspired by the Wikipedi [article](https://en.wikipedia.org/wiki/Move-to-front_transform#Example), Move-to-Front received a _Second Line of Defence_. i.e. the index after which the LITerals are inserted (standard Move-to-Front always uses `0`) is parametrized. This is beneficial for repeating LITerals – those would get sorted below that certain index. That could be the case, if the same LITeral gets re-used at the next LITeral position but especially for non-ranked RLEs.
 
-- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets the same flat implicit Huffman-tree – but only, if Move-to-Front was used to drive LITerals to lower values.
+- Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets the same flat implicit Huffman-tree `(n-1)`–`(n)`–`(n+1)`–`(n+1)` – but only, if Move-to-Front was used to drive LITerals to lower values. If Move-to-Front was extremely helpful, the same flat implicit Huffman-tree gets applied to the first quarter recursively. 
 
 - However, a `fast_lane` parameter switches off some of the mentioned optimizations making the program use less loops or just use some sane default values. 
 
@@ -40,13 +40,13 @@ The following list of changes might be completed and explained textually more de
 
 ## Status, To-Do and Thoughts
 
-This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
+This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – a clean-up definetly is required soon. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __9137__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __9110__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
-So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 7, see line 1097) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
+So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 15, see line 23) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
 Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that repetitions of similar sequences, such as `1234Y678` and `1234X678` compress better.
 
