@@ -19,6 +19,11 @@ static double cpu_time_used;
 #define RLE	0x0003
 #define MARKED	0x0080
 
+
+#define LZ_LEN_MAX_GAMMA 15
+#define MAX_ESC 9
+#define MAX_MTF 254
+
 struct pucr_node {
 	uint16_t	rle_count;
 	uint16_t	lz_count;
@@ -131,6 +136,11 @@ static uint8_t int_log2 (uint16_t x) { // uint16_t x
 
 // ---=== MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT   MOVE TO FRONT ===---
 
+/*struct alphabet_node {
+	uint8_t character;
+	uint8_t position;
+};*/
+
 
 static uint8_t move_to_front_encode (uint8_t in_char,
                                      uint8_t alphabet[],
@@ -178,54 +188,31 @@ static uint32_t update_lit_occ_from_graph (struct pucr_node graph[], uint16_t in
 }
 
 
-static uint32_t lit_huffy (uint16_t lit_occ[], uint8_t lit_rank[], uint8_t *lit_rank_len, uint8_t no_esc) {
+static int32_t huffiness (uint16_t occ[], uint16_t first, uint16_t last, uint8_t *opt_level) {
 
-	// how 'huffy' are literals? does it make sense to encode them with an implicit huffman tree?
+	// how 'huffy' are the values? does it make sense to encode them with an implicit huffman tree?
+	uint16_t i;
+	int32_t sum = 0;
 
-	uint16_t max_index, max_value;
-	int16_t i;
-
-	for (i=0;i<256;i++) {
-		/* find characters with highest number of occurences
-		 * but not below 2 for ranks 3 and following */
-		max_value = 0; // (i < 3)?1:2; !!! not for complete ranking
-		max_index = 0xFFFF;
-		for (uint16_t j=0; j < 256 ; j++) {
-			if (lit_occ[j] > max_value) {
-				/* check that candidate J is not already in list */
-				uint16_t k;
-				for (k=0;k<i;k++) if ( j==lit_rank[k] ) break;
-				if (k == i) {
-					max_value = lit_occ[j];
-					max_index = j;
-				}
-			}
-		}
-		if ( max_index != 0xFFFF ) {
-			lit_rank[i] = max_index;
-			*lit_rank_len = *lit_rank_len + 1;
+	uint8_t huff_level = 0;
+	int32_t max_sum = sum;
+	uint16_t q;
+	uint16_t j;
+	for (i=last-first+1; i>=4; i=q) {
+		q = i >> 2;
+		for (j=first;j<(first+q);j++) sum += occ[j]; // one bit less
+		for (j=first+(q<<1);j<first+i;j++) sum -= occ[j]; // one bit more
+		if (sum > max_sum) {
+			max_sum = sum;
+			huff_level++;
 		} else {
-			break;
+			break; // no need to go any further
 		}
 	}
 
-uint32_t min = 0xFFFFFFFF;
-uint16_t idx = 0xFFFF;
-//for (uint16_t ranked=0;ranked<i;ranked++) {
-uint32_t sum = 0;
-for (uint16_t g=0;g<64&&g<i;g++) sum += lit_occ[lit_rank[g]] * 7;
-for (uint16_t g=64;g<128&&g<i;g++) sum += lit_occ[lit_rank[g]] * 8;
-for (uint16_t g=128;g<i;g++) sum += lit_occ[lit_rank[g]] * 9;
-//fprintf(stderr,"SUM %u x LIT: %u\n",i,sum);
-/*if (sum < min) {
-min=sum;
-idx=ranked;
-}*/
-//}
-	*lit_rank_len = idx;
-
-//	*lit_rank_len = i;
-	return (0);
+	*opt_level = huff_level;
+// fprintf (stderr, "FINAL BIT SUM: %i   OPT LEVEL: %u\n",max_sum, huff_level);
+	return (max_sum);
 }
 
 // not used yet
@@ -376,7 +363,7 @@ static uint32_t find_closer_match (struct pucr_node graph[], const uint8_t *inbu
 	// even more if rle is longer in that position !!!
 	uint16_t off = (graph[pattern_start].rle_count -1);
 	off = off<=2?2:off;
-//off=0;
+// off=0;
 //	graph[pattern_start].lz_cur_offset = graph[pattern_start].lz_max_offset; // 0xFFFF;
         for (j=graph[pattern_start].seen_before; (j >= min_match_start) && (j != 0xFFFF); j=graph[j].seen_before) { // check at offset J for a match ...
         	if (graph[pattern_start].rle_count != graph[j].rle_count) continue;
@@ -402,6 +389,7 @@ static uint32_t prepare_last_seen_from_graph (struct pucr_node graph[], const ui
 	memset (last_occ, 0xFF, 0x20000);
 
 	for (uint16_t i=0; i < in_len;i++ ) {
+// if (inbuf[i] == inbuf[i+1]) continue;
 		uint16_t idx = (inbuf[i] << 8) | inbuf[i+1];
 		graph[i].seen_before = last_occ[idx];
 		last_occ[idx] = i;
@@ -430,6 +418,7 @@ graph[i].lz_cost = 0;
 			// even more if rle is longer in that position
 			off = (graph[i].rle_count -1);
 			off = off<=2?2:off;
+// off = 0;
 			for (j=graph[i].seen_before; j != 0xFFFF; j=graph[j].seen_before) { // check at offset J for a match ...
 				if (graph[i].rle_count != graph[j].rle_count) continue;
 				k = j + off;
@@ -463,29 +452,51 @@ print_clock(); start_clock();
 }
 
 
+
+int compare( const void* a, const void* b)
+{
+return ( *(int*)a - *(int*)b );
+//     return (a < b) - (a > b);
+}
+
+
+
+
 static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_t in_len,
 					       uint8_t no_esc,
-					       uint8_t *no_lz_offset_lsb, uint8_t *no_lz2_offset_bits) {
+					       uint8_t *no_lz_offset_lsb, uint8_t *no_lz2_offset_bits,
+					       uint8_t *lz2_opt_huff_level) {
 
 	uint16_t lz_occ[16] = {0};
 	uint16_t lz2_occ[16] = {0};
+
+uint32_t lz_offset[65536]= {0};
+
+uint16_t lz2_full_occ[65536] = {0};
+
 	// after all matches are finally determined, calculate the optimum of lsb-msb coding ratio
 	// first step: count them, especially the bits their offsets need
 	for (uint16_t i=0; i != in_len; i=graph[i].next_node) {
 		if (graph[i].way_to_go == LZ) {
 			// lz_length is not necessarily the real way to go,
 			// but next_node is
+lz_offset[graph[i].lz_cur_offset]++;
 			if ((graph[i].next_node - i) >= 3) {
 				// for the 3-byte and longer matches: calculate the case with "p" pure LSB and the rest E.Gamma-coded
 			        for (int p=0; p <16; p++) // 0 = 1-bit offset, 1 = 2-bit offset, ...
 					lz_occ[p] += (p+1) + int_log2( ((graph[i].lz_cur_offset-(graph[i].next_node-i))>>(p+1))+1 )*2+1;
 			} else {
+				lz2_full_occ[graph[i].lz_cur_offset-2]++;
 				int p = int_log2 (graph[i].lz_cur_offset - 2);
 				p = p<=15?p:15;
 				lz2_occ[p]++;
 			}
 		}
 	}
+
+// qsort( lz_offset, 65536, sizeof(uint32_t), compare );
+// for (uint16_t g=0; g < 65535;g++) fprintf (stderr, "LZ OFFSET Rnk %u. %u x\n",g,lz_offset[g]);
+// for (uint16_t g=0; g < 16;g++) fprintf (stderr, "LZ OFFSET Rnk %u. %u x\n",g,lz_offset[g]);
 
 	uint32_t min_sum = 0xFFFFFFFF;
 	uint8_t min_no_lsb = 0;
@@ -517,11 +528,36 @@ static uint32_t find_optimal_lz_offset_no_lsb (struct pucr_node graph[], uint16_
 	}
 // fprintf (stderr, "ESC: %2u LZ2 OFFSET %u BITS\n",no_esc, min_lz2_bits);
 	*no_lz2_offset_bits = min_lz2_bits;
+uint32_t lz2_huff_savings = huffiness (lz2_full_occ,0,(1<<(min_lz2_bits))-1, lz2_opt_huff_level);
+// fprintf (stderr, "LZ2 SAVINGS: %u     OPT HUFF: %u   (LZ MIN: %u)\n",lz2_huff_savings,*lz2_opt_huff_level,min_lz2_bits);
+
 	return (0);
 }
 
 
 // ---=== ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ESC ===---
+
+static uint8_t get_huffed_prefix (uint8_t value, uint8_t bits, uint8_t prefix_len) {
+
+	uint16_t mask = 1<<(bits-1);
+	mask |= mask >> 1;
+
+	if ((value & mask) == 0)
+		return (value >> (bits-1-prefix_len));
+	else if ((value & mask) == (1<<bits-2)) {
+//		put_bit (1);
+//		put_n_bits (value, bits-1);
+		return ((1 << (prefix_len-1))  | (value >> (bits-prefix_len)));
+	} else {
+//		put_bit (1);
+//		put_bit (0);
+//		put_n_bits (value, bits-1);
+		return ((1 << (prefix_len-1))  | (value >> (bits-prefix_len+1)));
+
+	}
+}
+
+
 
 
 /*
@@ -548,12 +584,14 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
 
     uint16_t i;
     int16_t j;
+
+    uint8_t esc8 = 8-no_esc;
+
     uint16_t states = (1<<no_esc);
     int32_t minp = 0, minv = 0, other = 0;
     int32_t a[256]; /* needs int/long */
     int32_t b[256]; /* Remembers the # of escaped for each */
 
-    uint8_t esc8 = 8-no_esc;
 
     for (i=0; i<256; i++)
         b[i] = a[i] = -1;
@@ -571,7 +609,7 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
         if (graph[i].way_to_go == MARKED) {
             graph[i].way_to_go = LIT;
             // use mtf-encoded literal for ESCape code evaluation
-            int16_t k = (graph[i].cur_lit >> esc8);
+            int16_t k = graph[i].cur_lit >> esc8;
 
             /*
                 k are the matching bytes,
@@ -609,10 +647,10 @@ static uint32_t optimize_esc (struct pucr_node graph[], const uint8_t *inbuf, ui
         }
     }
    /* Select the best value for the initial escape */
-    /* find smallest a[j] with smallest "smallest" escape code value */
+    /* find smallest a[j] with smallest "largest" escape code value */
     if (startEscape) {
         i = in_len;      /* make it big enough */
-        for (j=states-1; j >= 0; j--) {
+        for (j=0; j < states; j++) {
             if (a[j] <= i) {
                 *startEscape = (j << esc8);
                 i = a[j];
@@ -789,28 +827,39 @@ static void put_n_bits (int byte, int bits) {
 }
 
 
-static void put_huffed_value (int value, int bits) {
+static void put_huffed_value (int value, int bits, uint8_t rec) {
+
+	if (rec == 0) {
+		put_n_bits(value, bits);
+		return;
+	}
 
 	uint16_t mask = 1<<(bits-1);
 	mask |= mask >> 1;
 
 	if ((value & mask) == 0)
-		put_n_bits (value, bits-1);
+		if (rec == 1) {
+
+		} else {
+			put_bit(0);
+			put_huffed_value (value, bits-2, rec-1);
+			return;
+		}
 	else if ((value & mask) == (1<<bits-2)) {
 		put_bit (1);
-		put_n_bits (value, bits-1);
 	} else {
 		put_bit (1);
 		put_bit (0);
-		put_n_bits (value, bits-1);
 	}
+	put_n_bits (value, bits-1);
+
 }
 
 static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uint16_t in_len,
 			uint16_t *out_len,
 			uint16_t rle_occ[], uint8_t rle_rank[], uint8_t rle_rank_len,
-			uint8_t start_esc, uint8_t no_esc, uint8_t mtf, uint8_t mtf_second_line,
-			uint8_t lz_lsb, uint8_t lz2_bits, uint8_t lz_length_max_gamma) {
+			uint8_t start_esc, uint8_t no_esc, uint8_t mtf, uint8_t mtf_second_line, uint8_t lit_opt_huff_level,
+			uint8_t lz_lsb, uint8_t lz2_bits, uint8_t lz_length_max_gamma, uint8_t lz2_opt_huff_level) {
 
 	uint8_t graph_current_esc = start_esc;
 	uint8_t current_esc = start_esc;
@@ -838,16 +887,28 @@ static uint32_t output_path (struct pucr_node graph[], const uint8_t *inbuf, uin
 	if (mtf) put_bit (1); else put_bit (0);
 	if (mtf) put_n_bits (mtf_second_line,8);
 
+	// re-think sharply: the number of bits to be encoded is limited by the number of esc-bits (and thus remaining lit-bits) !!!
+	if (mtf) put_n_bits (lit_opt_huff_level, 3); // could reach up to 4 on case of 0 esc bits
+
+	// re-think sharply: the number of bits to be encoded is limited by the number of lz2 offset-bits !!!
+	put_n_bits (lz2_opt_huff_level,4);
 	// derive further parameters
 	uint8_t no_rle_char_esc_bits = (rle_rank_len==0)?0 : int_log2(rle_rank_len)+1;
 // fprintf (stderr, "RLE CHAR ESC CODE: no of 1's: %u\n", no_rle_char_esc_bits);
 
 int16_t old_lz_offset[4] = {0,0,0,0};
 uint16_t esc_seq_count = 0;
-uint16_t lz_len[256] = {0};
+uint16_t unesc_seq_count = 0;
+uint16_t no_unesc_seq = 0;
+uint16_t sum_unesc_count = 0;
+uint16_t lz_off[256] = {0};
+uint16_t lz_off_hist_match = 0;
 uint16_t rle_len[256] = {0};
 uint16_t missed_rle2  = 0;
 uint16_t rle2_ranked = 0;
+uint16_t rle2_unranked = 0;
+uint8_t rle_char_hist = 0;
+uint16_t rle_char_hist_match = 0;
 	// output data
 	for (uint16_t i=0; i!=in_len; i=graph[i].next_node) {
 // int old = bitCount;
@@ -855,9 +916,15 @@ uint16_t rle2_ranked = 0;
 			case RLE:
 fprintf(stderr,"");
 uint16_t rle = graph[i].next_node -i;
+if (inbuf[i]==rle_char_hist) {
+rle_char_hist_match++;
+}
+
+rle_char_hist=inbuf[i];
+
+
 rle = rle>63?63:rle;
 rle_len[rle]++;
-
 
 				// ESC ++ 011
 				put_n_bits (current_esc_8, no_esc);
@@ -876,10 +943,16 @@ if (rle==2) rle2_ranked++;
 					// not ranked: determine '11..11'-code length (already determined outside loop) followed by character
 					put_n_bits (0xFF, no_rle_char_esc_bits);
 					put_n_bits (inbuf[i], 8);
+if (rle==2) rle2_unranked++;
 //					fprintf (stderr, " {%u} ", no_esc + 3 + no_rle_char_esc_bits + 8 + int_log2(graph[i].next_node - i - 1)*2+1);
 				}
 //				fprintf (stderr, "%u. RLE(%c,%u) --> %u [%u vs %u]\n",i,inbuf[i],graph[i].next_node-i,graph[i].next_node,graph[i].bits_to_end-graph[graph[i].next_node].bits_to_end, bitCount-old);
+
 esc_seq_count++;
+if (unesc_seq_count > 8) { fprintf (stderr, "UNESC SEQ: %u\n", unesc_seq_count);
+sum_unesc_count += unesc_seq_count; no_unesc_seq++; }
+unesc_seq_count=0;
+
 				break;
 			case LZ:
 /* if ( (graph[i].next_node-i) == 2 )	fprintf (stderr, "%u. LZ(%u,%u) --> %u [%u]\n",i,
@@ -889,13 +962,9 @@ esc_seq_count++;
 										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end);
 */				put_n_bits (current_esc_8, no_esc);
 
-uint16_t lz= graph[i].next_node -i;
-lz = lz>63?63:lz;
-lz_len[lz]++;
-
-
-
-
+uint16_t lz= graph[i].lz_cur_offset-(graph[i].next_node -i);
+// lz = lz>255?255:lz;
+// if ((graph[i].next_node-i)!=2) lz_off[lz]++;
 
 				if ( (graph[i].next_node-i) == 2 ) {
 					// LZ2: ESC + 000 + LZ2 OFFSET (lz2_bits)
@@ -903,13 +972,14 @@ lz_len[lz]++;
 if (lz2_bits <= 2)
 					put_n_bits (graph[i].lz_cur_offset-2, lz2_bits);
 else
-put_huffed_value (graph[i].lz_cur_offset-2, lz2_bits);
+put_huffed_value (graph[i].lz_cur_offset-2, lz2_bits,lz2_opt_huff_level);
 //					fprintf (stderr, " {%u} ", no_esc + 2 + lz2_bits);
 				} else {
-uint16_t n=0;
+uint16_t n=4; // history length, we use 1 for now !!!
 uint16_t j=0;
 for (;j<n;j++)
-if ((graph[i].next_node-i-1) == old_lz_offset[j]) {
+if (lz == old_lz_offset[j]) {
+	lz_off_hist_match++;
 	break;
 }
 
@@ -917,19 +987,15 @@ if (j==n) {
 	old_lz_offset[3] = old_lz_offset[2];
 	old_lz_offset[2] = old_lz_offset[1];
 	old_lz_offset[1] = old_lz_offset[0];
-	old_lz_offset[0] = graph[i].next_node-i-1;
-	j = graph[i].next_node-i-1+n;
+	old_lz_offset[0] = lz;
 } else {
 	for (uint16_t k=j;k>0; k--)
 		old_lz_offset[k] = old_lz_offset[k-1];
-	old_lz_offset[0] = graph[i].next_node-i-1;
-	j = j+2;
+	old_lz_offset[0] = lz;
 }
-
-
 					// LZ: ESC + E. Gamma coded actually used lz length (next_node - i - 1), not neccessariliy lz_max_len ...
 //					put_value (graph[i].next_node - i - 1 , lz_length_max_gamma);
-//j = graph[i].next_node-i-1;
+j = graph[i].next_node-i-1;
 put_value (j , lz_length_max_gamma);
 					// ... and also E. Gamma coded LZ offset minus the actually used length of lz match(=next_node-i)
 					uint16_t off = (graph[i].lz_cur_offset-(graph[i].next_node-i));
@@ -937,6 +1003,7 @@ put_value (j , lz_length_max_gamma);
 					put_value ((off >> lz_lsb)+1, NO_MAX_GAMMA);
 					// LSBs
 					put_n_bits (off, lz_lsb);
+// put_huffed_value (off, lz_lsb,0);
 //					fprintf (stderr, " {%u} ", no_esc + int_log2(graph[i].next_node-i-1)*2+1 + int_log2((off>>lz_lsb)+1)*2+1 + lz_lsb);
 				}
 /* fprintf (stderr, "%u. LZ(%u,%u) --> %u [%u vs bitCount %u]\n",i,
@@ -944,33 +1011,38 @@ put_value (j , lz_length_max_gamma);
 										graph[i].lz_max_offset,
 										graph[i].next_node,
 										-graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end, bitCount-old);
-*/				break;
+*/
 esc_seq_count++;
+if (unesc_seq_count > 8) { fprintf (stderr, "UNESC SEQ: %u\n", unesc_seq_count);
+sum_unesc_count += unesc_seq_count; no_unesc_seq++; }
+unesc_seq_count=0;
+				break;
 
 			case LIT:
-//				fprintf (stderr, "%u. LIT(%c) --> %u [%u]",i,inbuf[i],graph[i].next_node, -graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end+(graph_current_esc == graph[i].new_esc?0:no_esc+3));
 if (inbuf[i] == inbuf[graph[i].next_node] && graph[graph[i].next_node].way_to_go == LIT) 
 missed_rle2++;
-
+//				fprintf (stderr, "%u. LIT(%c) --> %u [%u]",i,inbuf[i],graph[i].next_node, -graph[graph[i].next_node].bits_to_end + graph[i].bits_to_end+(graph_current_esc == graph[i].new_esc?0:no_esc+3));
 
 				if (graph[i].new_esc != graph_current_esc) {
 //					fprintf (stderr, "  NEW possible ESC: %u", graph[i].new_esc);
 					graph_current_esc = graph[i].new_esc;
 				}
 				if ( (graph[i].cur_lit & current_esc_mask) != current_esc) {
-if (esc_seq_count > 10) fprintf (stderr, "ESC SEQ: %u\n", esc_seq_count);
+
+unesc_seq_count++;
+if (esc_seq_count > 8) fprintf (stderr, "ESC SEQ: %u\n", esc_seq_count);
 esc_seq_count=0;
 
 					// output the mtf-encoded literal
 // normal:					put_n_bits (graph[i].cur_lit, 8);
+//put_huffed_value(graph[i].cur_lit,8);
 
-
-if ( mtf == 0 || no_esc > 6) {
+if ( mtf == 0 || no_esc > 6 || graph[i].cur_lit > 0xFF>>no_esc) {
 put_n_bits (graph[i].cur_lit, 8);
 } else {
 put_n_bits (graph[i].cur_lit >> (8-no_esc), no_esc);
-put_huffed_value(graph[i].cur_lit, (8-no_esc));
-}					// select huffman tree if available
+put_huffed_value(graph[i].cur_lit, (8-no_esc),lit_opt_huff_level);
+} 					// select huffman tree if available
 					// eventually, use codebook for output
 /*					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF)
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
@@ -987,6 +1059,10 @@ put_huffed_value(graph[i].cur_lit, (8-no_esc));
 // fprintf (stderr, " {%u} ",8);
 				} else {
 esc_seq_count++;
+if (unesc_seq_count > 8) { fprintf (stderr, "UNESC SEQ: %u\n", unesc_seq_count);
+sum_unesc_count += unesc_seq_count; no_unesc_seq++; }
+unesc_seq_count=0;
+
 
 					// ESC = first bits of LITeral
 					put_n_bits (current_esc_8, no_esc);
@@ -1002,10 +1078,10 @@ esc_seq_count++;
 					// eventually, use codebook for output
 
 // normal:					put_n_bits (graph[i].cur_lit, 8-no_esc);
-if ( mtf == 0 || no_esc > 6)
+if ( mtf == 0 || no_esc > 6 || graph[i].cur_lit > 0xFF>>no_esc)
 put_n_bits (graph[i].cur_lit, 8-no_esc);
 else {
-put_huffed_value(graph[i].cur_lit, (8-no_esc));
+put_huffed_value(graph[i].cur_lit, (8-no_esc),lit_opt_huff_level);
 }
 /*					if ( head_array[(graph[i].cur_lit) >>(8-no_esc)] == 0xFFFF){
 						put_n_bits (graph[i].cur_lit, 8- no_esc);
@@ -1032,43 +1108,120 @@ put_huffed_value(graph[i].cur_lit, (8-no_esc));
 	*out_len = (bitCount+7) >> 3;
 // fprintf (stderr, "TOTAL SIZE: %u BITS ~~ %u BYTES\n", bitCount, (bitCount+7) >> 3);
 //	printf ("OUT POINTER: %u\n", outPointer);
-//for(uint16_t h=0; h< 64;h++) fprintf(stderr, "LZ%3u: %5u x    RLE%3u: %5u\n",h,lz_len[h],h,rle_len[h]);
+// for(uint16_t h=0; h< 256;h++) fprintf(stderr, "LZ OFF%3u: %5u x    RLE%3u: %5u\n",h,lz_off[h],h,rle_len[h]);
+fprintf (stderr, "SUM UNESC SEQ COUNT: %u (%u x)\n", sum_unesc_count, no_unesc_seq);
 fprintf (stderr, "missed RLE2 opportunities: %u\n", missed_rle2);
+fprintf (stderr, "unranked RLE2s: %u\n", rle2_unranked);
 fprintf (stderr, "ranked RLE2s: %u\n", rle2_ranked);
-
+fprintf (stderr, "RLE CHAR HISTORY MATCH: %u x\n", rle_char_hist_match);
+fprintf (stderr, "LZ OFFSET HISTORY MATCH: %u x\n", lz_off_hist_match);
 
 }
 
 
-void print_graph_stats (const struct pucr_node graph[], uint16_t in_len) {
+void print_graph_stats (const struct pucr_node graph[], uint16_t in_len, uint8_t no_esc, uint8_t start_esc) {
 
 	uint16_t i = 0;
 
 	uint16_t rle_cnt = 0;
 	uint16_t rle_bytes = 0;
 
-	uint16_t max_lit_seq = 0;
-	uint16_t lit_seq = 0;
 	uint16_t lit_cnt = 0;
+	uint16_t lit_esc_cnt = 0;
+	uint16_t lit_unesc_cnt = 0;
+	uint16_t cur_lit_occ[256] = {0};
 
+	uint16_t unesc_seq_len = 0;
+	uint16_t unesc_seq_cnt = 0;
+	uint16_t unesc_seq_lit = 0;
+
+	uint16_t esc_seq_len = 0;
+	uint16_t esc_seq_cnt = 0;
+	uint16_t esc_seq_x = 0;
+
+	uint16_t lz_cnt = 0;
+	uint16_t lz_bytes = 0;
+
+	uint8_t current_esc = start_esc;
+	uint8_t graph_current_esc = start_esc;
+
+	uint8_t current_esc_mask = 0xFF00 >> no_esc;
+
+	uint8_t min_esc_seq_len = 16 >> no_esc;
 
 	for (i=0; i != in_len; i=graph[i].next_node) {
+		uint8_t esc = 1;
+		uint8_t lit = 0;
 		if ( graph[i].way_to_go == RLE) {
 			rle_cnt++;
 			rle_bytes += graph[i].next_node - i;
 		}
+		if ( graph[i].way_to_go == LZ) {
+			lz_cnt++;
+			lz_bytes += graph[i].next_node - i;
+		}
 		if ( graph[i].way_to_go == LIT ) {
+			lit = 1;
 			lit_cnt++;
-			lit_seq++;
+			cur_lit_occ[graph[i].cur_lit]++;
+			if (graph[i].new_esc != graph_current_esc) {
+				// new possible (!) ESC code if need to switch
+				graph_current_esc = graph[i].new_esc;
+			}
+			if ( (graph[i].cur_lit & current_esc_mask) != current_esc) {
+				esc = 0;
+			} else {
+				lit_esc_cnt++;
+				current_esc = graph[i].new_esc;
+			}
+		} else { // any non-LIT
+
+		}
+
+		if (!esc) {
+			unesc_seq_len++;
+			if (esc_seq_len > min_esc_seq_len) {
+				esc_seq_cnt++;
+				esc_seq_x += esc_seq_len;
+			}
+			esc_seq_len = 0;
 		} else {
-			if (lit_seq > max_lit_seq) max_lit_seq = lit_seq;
-			lit_seq = 0;
+			esc_seq_len++;
+			if (unesc_seq_len > 8) {
+				unesc_seq_cnt++;
+				unesc_seq_lit += unesc_seq_len;
+			}
+			unesc_seq_len = 0;
 		}
 	}
-	fprintf(stderr, "------== GRAPH  STATS ==------\n#RLE CNT: 		%u\n#RLEed BYTES:		%u\n#LIT:			%u\nMAX LIT SEQ:		%u\n------------------------------\n",
-		rle_cnt, rle_bytes,lit_cnt,max_lit_seq);
+	lit_unesc_cnt = lit_cnt - lit_esc_cnt;
+
+fprintf(stderr, "\
+------== GRAPH  STATS ==------\n\
+#RLE CNT: 		%u\n\
+#RLEed BYTES:		%u\n\
+#LIT:			%u\n\
+ #ESC:		%u\n\
+ #UNESC:	%u\n\
+#UNESC LIT SEQs >8:	%u\n\
+#UNESC LITs IN SEQs	%u\n\
+#ESC SEQs >%u:		%u\n\
+#ESCs IN SEQs		%u\n\
+#LZ CNT:		%u\n\
+LZed BYTES:             %u\n\
+------------------------------\n",
+rle_cnt, rle_bytes, lit_cnt,lit_esc_cnt,lit_unesc_cnt, unesc_seq_cnt,unesc_seq_lit, min_esc_seq_len,esc_seq_cnt,esc_seq_x, lz_cnt,lz_bytes);
+
+for (i=0; i< 256; i++) {
+// fprintf (stderr, "LIT %3u: %5u x\n",i, cur_lit_occ[i]);
 }
 
+// couldn't this be returned by update_lit_occ_from_graph?!
+uint16_t sum = 0;
+for (int16_t i = 0; i< 256; i++) sum += cur_lit_occ[i];
+
+
+}
 
 
 uint32_t pucrunch_256_encode (uint8_t *outbuf,uint16_t *out_len,
@@ -1094,19 +1247,23 @@ print_clock(); start_clock();
 fprintf (stderr, "--- PREPARE OCCURENCES: ");
 print_clock(); start_clock();
 
-uint8_t lz_length_max_gamma = 7;
+uint8_t lz_length_max_gamma = LZ_LEN_MAX_GAMMA;
 
 	find_matches (graph, inbuf, in_len, 0, in_len-1, 2, fast_lane, lz_length_max_gamma);
+
 // fprintf (stderr, "--- FINDING MATCHES TOTAL: ");
 // print_clock(); start_clock();
 	uint8_t lz_lsb = int_log2 (in_len)*2/3;
 	uint8_t lz2_bits = int_log2 (in_len)*2/3;
 		lz2_bits = lz2_bits>8?8:lz2_bits;
+	uint8_t lz2_opt_huff_level = 0;
 
 	uint32_t min_no_bits = 0xFFFFFFFF;
 	uint8_t min_no_esc;
 	uint8_t min_lz_lsb;
 	uint8_t min_lz2_bits;
+	uint8_t min_lz2_opt_huff_level = 0;
+
 	uint8_t min_start_esc;
 
 	// do the graph building with (standard) mtf turned on
@@ -1114,19 +1271,34 @@ uint8_t lz_length_max_gamma = 7;
 if (fast_lane > 1) mtf = 0;
 
 
-	uint8_t no_esc;
+	int8_t no_esc;
 	uint8_t start_esc = 0;
 
 	if (fast_lane < 3) {
-		for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?9:4); no_esc++) {
+	for (no_esc = (fast_lane<2)?0:1; no_esc < ((fast_lane<2)?MAX_ESC:4); no_esc++) {
 			// the first path generated using sane default
+
+lz_lsb = int_log2 (in_len)*2/3;
+lz2_bits = int_log2 (in_len)*2/3;
+lz2_bits = lz2_bits>8?8:lz2_bits;
+
 			find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
-			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits);
+// fprintf (stderr, "AFTER FIRST OPTIMIZE: %u bits\n",graph[0].bits_to_end);
+			find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits, &lz2_opt_huff_level);
+
+// too early determination seems to lead to unreliable results...
+// thus, a generic value is chosen here, the real one chosen
+// futher down the loop
+if (fast_lane < 2) lz_lsb = 10;
+
+// fprintf (stderr, "NO ESC: %u --- LZ2: %u --- LZLSB: %u \n",no_esc,lz2_bits,lz_lsb);
 			int escaped = optimize_esc (graph, inbuf, in_len, no_esc, &start_esc, mtf, 0);
 
 if (fast_lane < 2)	update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
 if (fast_lane < 2)	generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
 if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, no_esc, lz_lsb, lz2_bits, fast_lane);
+// fprintf (stderr, "AFTER SECOND OPTIMIZE: %u bits\n",graph[0].bits_to_end);
+if (fast_lane < 2)	find_optimal_lz_offset_no_lsb (graph, in_len, no_esc, &lz_lsb, &lz2_bits, &lz2_opt_huff_level);
 
 	            	/* Compare value: bits lost for escaping -- bits lost for prefix */
 			if ((graph[0].bits_to_end + (no_esc+3) * escaped) < min_no_bits) {
@@ -1135,6 +1307,7 @@ if (fast_lane < 2)	find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_
 				// also store the coresponding lz_lsb value
 				min_lz_lsb = lz_lsb;
 				min_lz2_bits = lz2_bits;
+				min_lz2_opt_huff_level = lz2_opt_huff_level;
 				min_start_esc = start_esc & ((0xff00>>no_esc) & 0xff);
 			}
 fprintf (stderr, "--- OPTIMIZING ESC %u: ", no_esc);
@@ -1155,13 +1328,15 @@ print_clock(); start_clock();
 if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
 if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
 if (fast_lane < 2)		find_best_path (graph, inbuf, in_len, rle_occ, rle_rank, rle_rank_len, min_no_esc, min_lz_lsb, min_lz2_bits, fast_lane);
-// if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
-// if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
+//if (fast_lane < 2)		update_rle_occ_from_graph (graph, inbuf, in_len, rle_occ);
+//if (fast_lane < 2)		generate_rle_ranks (rle_occ, rle_rank, &rle_rank_len);
 
 
 	// handling of remaining LITerals:
 	int escaped;
-	uint32_t huffed = 0;
+	int32_t huffed = 0;
+
+	uint8_t opt_level;
 
 fprintf (stderr, "GENERATING FINAL GRAPH: ");
 print_clock(); start_clock();
@@ -1173,11 +1348,10 @@ if (fast_lane < 2) {
 	for (mtf = 0; mtf < 2; mtf++) {
 		escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc, mtf, 0);
 		min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped; // "- escaped" is for those counted 9-bit LIT in find_best_path
-
 huffed = 0;
-// if (!fast_lane)		update_lit_occ_from_graph (graph, in_len, lit_occ);
-// if (!fast_lane)		lit_huffy (lit_occ, lit_rank, &lit_rank_len, no_esc);
-
+if (!fast_lane)		update_lit_occ_from_graph (graph, in_len, lit_occ);
+if (!fast_lane)		huffed = huffiness (lit_occ, 0, 0xFF>>min_no_esc, &opt_level);
+// fprintf (stderr, "min_no_bits = %u\n",min_no_bits);
 		if ( (min_no_bits-huffed) < min_mtf_bits ) {
 			min_mtf = mtf;
 			min_mtf_bits = (min_no_bits - huffed);
@@ -1186,20 +1360,27 @@ huffed = 0;
 }
 	// if mtf, will a higher mtf_second_line be beneficial?
 	uint8_t min_mtf_second_line = 0;
+	uint8_t  min_lit_opt_huff_level = 0;
 	uint32_t min_mtf_second_line_bits = 0xFFFFFFFF;
 	if (min_mtf) {
-		for (uint8_t mtf_second_line=0; mtf_second_line < (fast_lane?1:254); mtf_second_line++) {
+		for (uint8_t mtf_second_line=0; mtf_second_line < (fast_lane?1:MAX_MTF); mtf_second_line++) {
 			escaped = optimize_esc (graph, inbuf, in_len, min_no_esc, &min_start_esc,min_mtf, mtf_second_line);
 			min_no_bits = graph[0].bits_to_end + (min_no_esc+3)*escaped;
 huffed=0;
+update_lit_occ_from_graph (graph, in_len, lit_occ);
+huffed = huffiness (lit_occ, 0, 0xFF >> min_no_esc, &opt_level);
 // fprintf (stderr, "MTF CHECK %u BITS: %u\n",mtf_second_line, min_no_bits-huffed);
+
 			if ( (min_no_bits-huffed) < min_mtf_second_line_bits ) {
+// fprintf (stderr,"huffed = %u\n",huffed);
 				min_mtf_second_line = mtf_second_line;
 				min_mtf_second_line_bits = (min_no_bits - huffed);
+				min_lit_opt_huff_level = opt_level;
 			}
 		}
 	}
 fprintf (stderr, "----- MTF: %u    MTF SECOND LINE: %u\n",min_mtf, min_mtf_second_line);
+fprintf (stderr,"OPT LIT HUFF LEVEL: %u\n",min_lit_opt_huff_level);
 
 fprintf (stderr, "HUFFMAN ON LITERALS: ");
 print_clock(); start_clock();
@@ -1207,10 +1388,14 @@ print_clock(); start_clock();
 huffed=0;
 fprintf (stderr, "CALCULATE (AGAIN) USING FINALLY DETERMINED PARAMETERS: ");
 print_clock(); start_clock();
-	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rle_rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lz_lsb, min_lz2_bits, lz_length_max_gamma );
+	output_path (graph, inbuf, in_len, out_len, rle_occ, rle_rank, rle_rank_len, min_start_esc, min_no_esc, min_mtf, min_mtf_second_line, min_lit_opt_huff_level, min_lz_lsb, min_lz2_bits, lz_length_max_gamma, min_lz2_opt_huff_level);
+
+// fprintf (stderr, "START ESC: %u\n",min_start_esc);
+
+
 fprintf(stderr, "-----== ENCODING STATS ==-----\n#ESC: 			%u\n#ESCAPED LIT:		%u\n#LZ OFFSET LSB:		%u\n#LZ2 OFFSET BITS	%u\n#RANKED RLEs		%u\nIN:			%u\nOUT: without header	%u\n     before huffman\n------------------------------\n",
 	min_no_esc, escaped, min_lz_lsb, min_lz2_bits, rle_rank_len, in_len, (min_no_bits + 7)>>3);
-print_graph_stats (graph, in_len);
+print_graph_stats (graph, in_len,min_no_esc, min_start_esc);
 
 
 fprintf (stderr, "--- OUTPUT FINAL PATH: ");
@@ -1274,10 +1459,16 @@ static int up_GetValueMaxGamma(int maxGamma) {
 }
 
 
-static int up_get_huffed_value (int bits) {
+static int up_get_huffed_value (int bits, uint8_t rec) {
+
+	if (rec == 0) return (up_GetBits(bits));
 
 	if (!up_GetBits(1))
-		return (up_GetBits(bits-2));
+		if (rec == 1)
+			return (up_GetBits(bits-2));
+		else {
+			return (up_get_huffed_value (bits-2,rec-1));
+		}
 	else if (up_GetBits(1))
 		return (up_GetBits(bits-2) | (1<<(bits-2)));
 	else
@@ -1315,7 +1506,10 @@ start_clock();
 	// move to front
 	uint8_t mtf = up_GetBits(1);
 	uint8_t mtf_second_line = mtf?up_GetBits(8):0;
-
+	// recursion level of LITerals' implicit huffman
+        uint8_t lit_opt_huff_level = mtf?up_GetBits(3):0;
+	// recursion level of LZ2 offsets' implicit huffman
+	uint8_t lz2_opt_huff_level = up_GetBits(4);
 
 fprintf(stderr, "-----== DECODING STATS ==-----\n#ESC: 			%6u\n#LZ OFFSET LSB:		%6u\n#LZ2 OFFSET BITS	%6u\n#RANKED RLEs		%6u\nIN incl. header:	%6u\nOUT:			%6u\n------------------------------\n",
 	no_esc, lz_lsb, lz2_bits, rank_len, in_len, len);
@@ -1357,14 +1551,16 @@ rle_ranked_cnt++;
 						current_esc = current_esc8 << (8 - no_esc);
 						// fetch the rest of the mtf-encoded LITeral
 // normal						first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-						first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc):up_GetBits(8-no_esc));
+if (!first_fetch)					first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc,lit_opt_huff_level):up_GetBits(8-no_esc));
+else first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
+
 						outbuf[cnt++] = mtf?move_to_front_decode (first_fetch, alphabet, mtf_second_line):first_fetch;
 //fprintf (stderr, "%u. LIT (%c)  --ESCAPED--\n", cnt-1, first_fetch);
 					}
 				} else {
 					// LZ - to be specific, this is LZ2
 // normal					uint16_t offset = up_GetBits (lz2_bits);
-					uint16_t offset = (lz2_bits<=2?up_GetBits(lz2_bits):up_get_huffed_value (lz2_bits));
+					uint16_t offset = (lz2_bits<=2?up_GetBits(lz2_bits):up_get_huffed_value (lz2_bits,lz2_opt_huff_level));
 // fprintf (stderr, "%u. LZ (2,%u)\n", cnt, offset+2);
 					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
 					outbuf[cnt]=outbuf[cnt-2-offset]; cnt++;
@@ -1403,7 +1599,9 @@ if (c<5)	fprintf (stderr, "%5u. len=%5u [j=%u]\n", c,old_lz_offset[fetch],fetch)
 		} else {
 			// unESCaped LITeral, fetch the the rest
 // normal			first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
-			first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc):up_GetBits(8-no_esc));
+if (!first_fetch)	first_fetch = (first_fetch<<(8-no_esc)) | (mtf==1 && no_esc<=6?up_get_huffed_value(8-no_esc,lit_opt_huff_level):up_GetBits(8-no_esc));
+else first_fetch = (first_fetch<<(8-no_esc)) | up_GetBits(8-no_esc);
+
 			outbuf[cnt++] = mtf?move_to_front_decode (first_fetch, alphabet, mtf_second_line):first_fetch;
 //fprintf (stderr, "%u. LIT (%c)\n", cnt-1, first_fetch);
 		}
