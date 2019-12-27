@@ -12,7 +12,7 @@ Having enjoyed reading that extremly inspring [article](https://github.com/Logan
 
 Today, most `edge` nodes presumably are desktop-like computers with heaps of CPU horse power that easily can afford some compression of small sized ethernet packets which usually do not grow above 1492 bytes in size.
 
-However, some tiny `edges` in the _Internet of Things_ might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch` as one of the compression algorithms offering that certain asymmetry.
+However, some tiny `edges` in the _Internet of Things_ – maybe Raspberry class or below – might not allow CPU cycles for compression, those would send out uncompressed data. To make them at least accept compressed packets, it is crucial that decompression does not eat up too many of their precious CPU cycles. That is the reason for taking a closer look on `pucrunch` as one of the compression algorithms offering that certain asymmetry.
 
 As soon as `pucr` reaches a usable state, I will have it added to my fork of `n2n`.
 
@@ -25,6 +25,8 @@ The following list of changes might be completed and explained textually more de
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat implicit Huffman-tree (see below) is applied if supporting compression.
 
 - General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
+
+- General LZ offsets get ranked if quantitywise rewarding. They are escaped by the least used prefix of LSBs of such a length that would still allow sufficent compression profit.
 
 - While determining the RLE and LZ cost, the longest match and _all_ shorter matches are checked.
 
@@ -40,19 +42,21 @@ The following list of changes might be completed and explained textually more de
 
 ## Status, To-Do and Thoughts
 
-This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – a clean-up definetly is required soon. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in  `main`. It can be found as the last parameter of `pucrunch_256_encode` where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
+This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – absolutely, a clean-up definetly is required soon. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in line 22 where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __9110__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __8951__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
-So far, only some advantage of `max_gamma` is taken yet. Is this is a high-priority todo? An implementation with manually set `max_gamma` (set to 15, see line 23) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
+So far, only some advantage of `max_gamma` is taken yet. Is this a high-priority todo? An implementation with manually set `max_gamma` (set to 15, see line 23) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
 Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that repetitions of similar sequences, such as `1234Y678` and `1234X678` compress better.
 
-An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.
+~~An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.~~
 
-To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This allows to encode LZ-offsets beginning with `0` designating the position `pattern - match_length`. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
+LZ parsing is quite greedy and probably far from optimal parsing. It needs clarification how close we could get to optimal parsing and how expensive it is with a view to time constraints.
+
+To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This would allow to encode LZ-offsets beginning with `0` designating the position `pattern - match_length` – which was discarded in favor of a sharper spectrum of LZ offsets supporting their ranking. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
 
