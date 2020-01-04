@@ -42,7 +42,7 @@ The following list of changes might be completed and explained textually more de
 
 ## Status, To-Do and Thoughts
 
-This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – absolutely, a clean-up definetly is required soon. It has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in line 22 where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
+This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – absolutely, a clean-up definetly is required soon; it shall not be procrestinated anymore. The code has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in line 22 where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
 The `ivanova.bin`-file now regularily gets compressed to __8951__ bytes including the header and a few more for the fast lanes.
 
@@ -50,11 +50,15 @@ One possible string matching speed-up that takes advantage of RLE is still lacki
 
 So far, only some advantage of `max_gamma` is taken yet. Is this a high-priority todo? An implementation with manually set `max_gamma` (set to 15, see line 23) for the LZ lengths showed only a tiny compression gain... Maybe better for RLE lengths?
 
+As a field trial, position-aware `max_gamma` (at the beginning of a file, the offsets will not come out too high) produced more complicated code than significant savings. At the beginning of a file, LZ opportunities usually are rare anyway. Cancelled for now.
+
 Another finding while testing the use of LZ length history (encoding the historic lengths as the first LZ lengths, the non-historic ones becoming longer then), it always increased output file size for no matter what history lenght being used (1,2,3, or 4). Shall we try history for LZ offset? Hope is, that repetitions of similar sequences, such as `1234Y678` and `1234X678` compress better.
 
-~~An LZ offset table similar to the already implemented RLE character table might be worth deliberating. It would require some changes in the code and especially the way LZ offsets are being encoded... not sure if it yields better comression. Maybe not to be tested anytime soon.~~
+However, LZ offsets need to get shorter somehow... Maybe it just about their encoding.
 
 LZ parsing is quite greedy and probably far from optimal parsing. It needs clarification how close we could get to optimal parsing and how expensive it is with a view to time constraints.
+
+While pondering the implementation of tokenizing the most used 2-grams or even 3-grams of the input, the more general approach of dictionary came up. As that is just another LZ variant, maybe a mixture of relative offsets and leftmost-oriented offsets apporaches would help?
 
 To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This would allow to encode LZ-offsets beginning with `0` designating the position `pattern - match_length` – which was discarded in favor of a sharper spectrum of LZ offsets supporting their ranking. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
 
