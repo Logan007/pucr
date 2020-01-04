@@ -58,6 +58,8 @@ However, LZ offsets need to get shorter somehow... Maybe it just about their enc
 
 LZ parsing is quite greedy and probably far from optimal parsing. It needs clarification how close we could get to optimal parsing and how expensive it is with a view to time constraints.
 
+How about delta-LZ?
+
 While pondering the implementation of tokenizing the most used 2-grams or even 3-grams of the input, the more general approach of dictionary came up. As that is just another LZ variant, maybe a mixture of relative offsets and leftmost-oriented offsets apporaches would help?
 
 To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern, `find_matches` and the graph optimizer just assume full matches to end before the pattern starts. This would allow to encode LZ-offsets beginning with `0` designating the position `pattern - match_length` – which was discarded in favor of a sharper spectrum of LZ offsets supporting their ranking. Overlapping matches would be beneficial only to represent unranked RLE longer than 2 or recurring patterns. A full implementation might eat up some of the speed-wins gained in `find_matches` which would require more flexibility , e.g. cannot presume equal values of `rle_count`. In addition, the `offset` pointing to the match needs more bits for encoding. First experiments do not look too promising. This point needs thoughts and will be reconsidered in conjunction with RLE.
