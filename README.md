@@ -66,7 +66,9 @@ To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
 
-As of now, compression of 1492 byte sized packets is quickly done on an old i7-2860QM CPU. The roughly drafted code especially gains speed from `gcc`’s `-O3` option. However, plans are to look deeper in how `pthread` could be of additional help here.
+Speed... having reached a certain depth of compression features, it probably is to to consolidate with a view to speed. `ivanova.bin`'s decompression speed varies between roughly 45 MB/sec and 170 MB/sec on Raspberry 3B+ or i7-2860QM, respectively. This is roughly four times less than `zstd` would achieve... but that truly is an extremely high-ranking benchmark for comparison. Nevertheless, quite spurring! Let's see how we can squeeze a bit more speed out of `pucr`.
+
+As of now, compression of 1492 byte sized packets performs eyefelt quickly on an old i7-2860QM CPU; no measurement yet. The roughly drafted code especially gains speed from `gcc`’s `-O3` option. However, plans are to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
