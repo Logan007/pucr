@@ -22,7 +22,7 @@ The following list of changes might be completed and explained textually more de
 
 - An entry to the RLE character table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
 
-- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat implicit Huffman-tree (see below) is applied if supporting compression.
+- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat implicit [Huffman-tree](https://github.com/Logan007/pucr/blob/master/doc/Implicit%20Huffman%20Trees.md) is applied if supporting compression.
 
 - General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
 
