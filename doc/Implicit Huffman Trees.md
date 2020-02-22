@@ -16,7 +16,7 @@ Luckily, Move-to-Front transform usually outputs small values representing the l
                          /        \
                    [$40..$7F]  [$80..$FF]
 
-The first quarter of 6-bit symbols get a `0` prefix making them 7 bit long. The second quarter get a `10` prefix applied making those 6-bit symbols 8 bit long. Finally, the last half of – hopefully less often – 7-bit symbols get the `11` prefix apllied, making those 9 bit long.
+The first quarter of 6-bit symbols get a `0` prefix making them 7 bit long. The second quarter get a `10` prefix applied making those 6-bit symbols 8 bit long. Finally, the last half of – hopefully less often – 7-bit symbols get the `11` prefix applied, making those 9 bit long.
 
 If Move-to-Front is extremely successful, it might be promising to recursively apply the same scheme to the first quarter, i.e. the leftmost branch (only!), leaving untouched the right side of the tree:
 
@@ -39,9 +39,9 @@ If Move-to-Front is extremely successful, it might be promising to recursively a
 
 In this case, the additional level would result in the following symbol lengths:
 
-00  + [$00..$0F](4 bits) = 6 bits
-010 + [$10..$1F](4 bits) = 7 bits
-011 + [$20..$3F](5 bits) = 8 bits
+    00  + [$00..$0F](4 bits) = 6 bits
+    010 + [$10..$1F](4 bits) = 7 bits
+    011 + [$20..$3F](5 bits) = 8 bits
 
 This could be continued up to level 4, in which case only the symbol $00 would be encoded by 4 consecutive '0' bits and the other symbols longer respectively.
 
@@ -65,7 +65,7 @@ A directly deduced recursive way of an implementation:
                      return (get_bits (no_of_bits - 1) | (1 << (no_of_bits - 1)));
          }
 
-Note that the recursive call happens for a `0` bit prefix only. In other cases, no recursive calls happen. Also, recursion comes to an end as soon as `rec_lvl` gets too small.
+Note that the recursive call happens for a `0` bit prefix only. In other cases, no recursive calls happen. Also, recursion comes to an end as soon as `rec_lvl` gets too small. `no_of_bits` is the number of unencoded symbol bits – 8 for characters.
 
 To avoid recursive function calls, we could linearize that function:
 
