@@ -24,7 +24,7 @@ The following list of changes might be completed and explained textually more de
 
 - For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat [implicit Huffman-tree](https://github.com/Logan007/pucr/blob/master/doc/Implicit%20Huffman%20Trees.md) is applied if supporting compression.
 
-- General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
+- General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding ~~(with inverted prefix)~~. An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
 
 - General LZ offsets get ranked if quantitywise rewarding. They are escaped by the least used prefix of LSBs of such a length that would still allow sufficent compression profit.
 
@@ -32,7 +32,7 @@ The following list of changes might be completed and explained textually more de
 
 - All LITerals of the created graph – and only the LITerals – get a Move-to-Front encoding applied to hopefully minimize the use of _ESCaped_ LITerals by assembling most of the LITerals’ values in the lower range. Also, it could help to keep the number of escape bits low and thus shortening all other regular ESCape sequences. However, as it is context-dependant, there are some cases which achieve better compression skipping Move-to-Front. Thus, `pucr` figures out whether it is better to take advantage of it – or not.
 
-- Inspired by the Wikipedia [article](https://en.wikipedia.org/wiki/Move-to-front_transform#Example), Move-to-Front received a _Second Line of Defence_. i.e. the index after which the LITerals are inserted (standard Move-to-Front always uses `0`) is parametrized. This is beneficial for repeating LITerals – those would get sorted below that certain index. That could be the case, if the same LITeral gets re-used at the next LITeral position but especially for non-ranked RLEs.
+- Inspired by the Wikipedia [article](https://en.wikipedia.org/wiki/Move-to-front_transform#Example), Move-to-Front received a parameter determining how far the LITerals are moved to front (standard Move-to-Front always puts them to `0`). It is implemented using a (parametrized) shift right, i.e. the old position is divides by 1 (unchanged), 2, 4, ...  This is beneficial for recurring LITerals – those would be getting sorted closer to `0` then.
 
 - Having Move-to-Front in place, a following Huffman encoding step on the LITerals is performed. Not to interfere with the well working ESCape-system, only the trailing bits of the literals, i.e. the last `8 minus number_of_escape_bits` bits, are Huffman-encoded. Each distinct possible ESCape sequence, e.g. `00`, `01`, `10`, and `11` in case of two ESCape bits, gets the same flat implicit Huffman-tree `(n-1)`–`(n)`–`(n+1)`–`(n+1)` – but only, if Move-to-Front was used to drive LITerals to lower values. If Move-to-Front was extremely helpful, the same flat implicit Huffman-tree recursively gets applied to the first `(n-1)`-quarter over and over again until bits run out. 
 
@@ -40,11 +40,13 @@ The following list of changes might be completed and explained textually more de
 
 - The header contains parameters for the mentioned optimizations such as the _number of LSBs_ or _LZ offset_ etc. Fields are used bitwise, e.g. 4 bits only for the _number of ESCape bits_. It does not require neither CBM-specific parts nor the integrated decruncher.
 
+- Pucr switched to the regular, i.e. not the inverted, Elias Gamma code for the sake of being able to use an intrinsic (and assembly if supported by the CPU) instruction to count the leading zeros.
+
 ## Status, To-Do and Thoughts
 
 This all is _work in progress_! The code still is extremly polluted with `fprintf`s to `stderr` and other things – absolutely, a clean-up definetly is required soon; it shall not be procrestinated anymore. The code has nearly no error checking and therefore is sensitive to malformed data. Also, the `fast_lane` is still hard-coded in line 22 where `0` is slowest, and `3` should be the fastest, `1` and `2` something in between – check it out.
 
-The `ivanova.bin`-file now regularily gets compressed to __8951__ bytes including the header and a few more for the fast lanes.
+The `ivanova.bin`-file now regularily gets compressed to __8939__ bytes including the header and a few more for the fast lanes.
 
 One possible string matching speed-up that takes advantage of RLE is still lacking; it might follow as soon as a way is found how not to loose compression ratio. Maybe, this is a `fast_lane` candidate.
 
@@ -66,13 +68,13 @@ To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
 
-Speed... having reached a certain depth of compression features, it probably is to to consolidate with a view to speed. `ivanova.bin`'s decompression speed varies between roughly 45 MB/sec and 170 MB/sec on Raspberry 3B+ or i7-2860QM, respectively. This is roughly four times less than `zstd` would achieve... but that truly is an extremely high-ranking benchmark for comparison. Nevertheless, quite spurring! Let's see how we can squeeze a bit more speed out of `pucr`. Advertising the upcoming code changes that will be published soon: Avoiding some branches in the bit reader and decoding routines lifts decoding speed above 300 MB/sec on that same i7.
+Speed... having reached a certain depth of compression features, it probably is to to consolidate with a view to speed. `ivanova.bin`'s decompression speed varies between roughly 45 MB/sec and 170 MB/sec on Raspberry 3B+ or i7-2860QM, respectively. This is roughly four times less than `zstd` would achieve... but that truly is an extremely high-ranking benchmark for comparison. Nevertheless, quite spurring! Let's see how we can squeeze a bit more speed out of `pucr`. Advertising the upcoming code changes that will be published soon: Avoiding some branches in the bit reader and decoding routines lifts decoding speed close to 300 MB/sec on that same i7.
 
-As of now, compression of 1492 byte sized packets performs eyefelt quickly on an old i7-2860QM CPU; no measurement yet. The roughly drafted code especially gains speed from `gcc`’s `-O3` option. However, plans are to look deeper in how `pthread` could be of additional help here.
+As of now, compression of 1492 byte sized packets performs eyefelt quickly on an old i7-2860QM CPU; no measurement yet. The roughly drafted code especially gains speed from `gcc`’s `-Ofast` option. However, plans are to look deeper in how `pthread` could be of additional help here.
 
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
-The code should compile straight away by `gcc -O3 pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
+The code should compile straight away by `gcc -Ofast -march=native pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
 
 ``./pucr < ivanova.bin > ivanova.bin.pu.upu``
 
