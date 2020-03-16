@@ -22,7 +22,7 @@ The following list of changes might be completed and explained textually more de
 
 - An entry to the RLE character table only saves bits if it gets used _more_ than once (on positions 1 to 3) or twice (on positions 4 to 15), respectively. With a view to relatively small packet sizes, this criterion becomes relevant and additionally is implemented.
 
-- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat implicit [Huffman-tree](https://github.com/Logan007/pucr/blob/master/doc/Implicit%20Huffman%20Trees.md) is applied if supporting compression.
+- For each packet, the optimal bit-size of LZ2-offset is determined and used – in lieu of a fixed 8-bit size. To make some allowance for outliers that might be rare but influence the LZ2-offset size, a flat [implicit Huffman-tree](https://github.com/Logan007/pucr/blob/master/doc/Implicit%20Huffman%20Trees.md) is applied if supporting compression.
 
 - General LZ offsets (for longer-than-two byte matches) are output twofold: The LSBs are stored in regular binary 2<sup>n</sup> coding whereas the exceeding MSBs are encoded using the variable length Elias Gamma coding (with inverted prefix). An optimization run to determine the optimal number _n_ of plainly encoded LSBs is performed per packet.
 
@@ -66,7 +66,7 @@ To overlap or not to overlap... Currently, LZ matches cannot overlap the pattern
 
 The Move-to-Front encoding is quite fast and works extremly well for most part of the available, limited test set.
 
-Speed... having reached a certain depth of compression features, it probably is to to consolidate with a view to speed. `ivanova.bin`'s decompression speed varies between roughly 45 MB/sec and 170 MB/sec on Raspberry 3B+ or i7-2860QM, respectively. This is roughly four times less than `zstd` would achieve... but that truly is an extremely high-ranking benchmark for comparison. Nevertheless, quite spurring! Let's see how we can squeeze a bit more speed out of `pucr`.
+Speed... having reached a certain depth of compression features, it probably is to to consolidate with a view to speed. `ivanova.bin`'s decompression speed varies between roughly 45 MB/sec and 170 MB/sec on Raspberry 3B+ or i7-2860QM, respectively. This is roughly four times less than `zstd` would achieve... but that truly is an extremely high-ranking benchmark for comparison. Nevertheless, quite spurring! Let's see how we can squeeze a bit more speed out of `pucr`. Advertising the upcoming code changes that will be published soon: Avoiding some branches in the bit reader and decoding routines lifts decoding speed above 300 MB/sec on that same i7.
 
 As of now, compression of 1492 byte sized packets performs eyefelt quickly on an old i7-2860QM CPU; no measurement yet. The roughly drafted code especially gains speed from `gcc`’s `-O3` option. However, plans are to look deeper in how `pthread` could be of additional help here.
 
