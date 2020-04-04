@@ -43,9 +43,9 @@ In this case, the additional level would result in the following symbol lengths:
     010 + [$10..$1F](4 bits) = 7 bits
     011 + [$20..$3F](5 bits) = 8 bits
 
-This could be continued up to level 4, in which case only the symbol $00 would be encoded by 4 consecutive '0' bits and the other symbols longer respectively.
+This could be continued up to level 4, in which case only the symbol `$00` would be encoded by 4 consecutive `0` bits and the other symbols longer respectively.
 
-This system might not optimally relflect the actual entropy. On the other hand, to describe the tree, we only need to transmit the _level_ used. With a view to small packet to compress, maybe this already is quite sufficent despite non-optimality.
+This system might not optimally relflect the actual entropy. On the other hand, to describe the tree, we only need to transmit the _level_ used. With a view to small packets to compress, maybe this already is quite sufficent despite non-optimality.
 
 # Decoding
 
@@ -91,7 +91,7 @@ To avoid recursive function calls, we could linearize that function:
 
 Recursion is replaced by a loop in which the parameters are adjusted the same way as in the recursive call. Also, we take care of the counted down `rec_lvl == 0` outside the loop.
 
-While shifting towards a more branchless bit-reader design, I came up with the following well working version (not pushed to the repository yet – coming soon):
+While shifting towards a more branchless bit-reader design, I came up with the following well working version:
 
          uint32_t inline up_get_huffed_value (uint32_t no_of_bits, int32_t rec_lvl) {
 
@@ -127,4 +127,6 @@ While shifting towards a more branchless bit-reader design, I came up with the f
              return (input);
          }
 
-`gt` and `min` denote implementations of _greater than_ as well as _minimum_ which rely on sign-extension tricks using arithmetic right shift [TO DO: link to those tricks]. Also, leftwise bit rotation `rotl` is used [TO DO: add missing link]. Here, it pays off having re-applied this scheme to the leftmost branch only as we just need to count the leading zeros using the corresponding intrinsic.
+`gt` and `min` denote implementations of _greater than_ as well as _minimum_ which rely on [sign-extension tricks](https://hbfs.wordpress.com/2008/08/05/branchless-equivalents-of-simple-functions/) using arithmetic right shift. Also, leftwise bit rotation [`rotl`](https://fgiesen.wordpress.com/2018/02/19/reading-bits-in-far-too-many-ways-part-1/) is used to the the _value of interest_ in the LSBs. 
+
+It pays off having re-applied this scheme to the leftmost branch only as we just need to count the leading zeros using the corresponding intrinsic and thus finally allowing a branchless design.
