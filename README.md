@@ -72,6 +72,8 @@ Speed... having reached a certain depth of compression features, it probably is 
 
 As of now, compression of 1492 byte sized packets performs eyefelt quickly on an old i7-2860QM CPU; no measurement yet. The roughly drafted code especially gains speed from `gcc`’s `-Ofast` option. However, plans are to look deeper in how `pthread` could be of additional help here.
 
+Next steps would aim at further speeding-up decompression before taking care of compression.
+
 With a view to the presumed usecase, the chosen data types limit data size to `64K - 1` bytes (or so). This may be broadended in future versions.
 
 The code should compile straight away by `gcc -Ofast -march=native pucr.c -o pucr` to an executable called `pucr` – flawlessly in current Arch Linux. It takes input from `stdin`, compresses, decompresses and outputs to `stdout` while stats are output to `stderr`. One possible healthy call could look as follows:
