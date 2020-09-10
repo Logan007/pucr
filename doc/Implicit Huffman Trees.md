@@ -129,4 +129,4 @@ While shifting towards a more branchless bit-reader design, I came up with the f
 
 `gt` and `min` denote implementations of _greater than_ as well as _minimum_ which rely on [sign-extension tricks](https://hbfs.wordpress.com/2008/08/05/branchless-equivalents-of-simple-functions/) using arithmetic right shift. Also, leftwise bit rotation [`rotl`](https://fgiesen.wordpress.com/2018/02/19/reading-bits-in-far-too-many-ways-part-1/) is used to the the _value of interest_ in the LSBs. 
 
-It pays off having re-applied this scheme to the leftmost branch only as we just need to count the leading zeros using the corresponding intrinsic and thus finally allowing a branchless design.
+It pays off having re-applied this scheme to the leftmost branch only as we just need to count the leading zeros using the corresponding intrinsic and thus finally allowing a branchless design. Will SSE allow for four parallel streams? To be tested somewhen…
